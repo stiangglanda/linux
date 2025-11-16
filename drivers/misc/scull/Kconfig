@@ -1,0 +1,7 @@
+config SCULL
+    tristate "SCULL: A Simple Character Utility for Locking Localities"
+    default m
+    help
+      This is a sample driver from the book "Linux Device Drivers, 3rd Edition".
+      It is a simple character driver that doesn't correspond to any real device.
+      If you are unsure, say N.
