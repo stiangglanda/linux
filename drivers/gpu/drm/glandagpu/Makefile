@@ -1,0 +1,1 @@
+obj-$(CONFIG_DRM_GLANDA) += glandagpu.o
