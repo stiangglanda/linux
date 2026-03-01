@@ -7,6 +7,10 @@
 #include <linux/mod_devicetable.h> // Device Tree parsing
 #include <linux/of.h>
 #include <linux/slab.h>  // GFP_KERNEL
+#include <linux/fs.h>
+#include <linux/cdev.h>
+#include <linux/uaccess.h>
+#include "glanda_uapi.h"
 
 // Hardware Constants
 #define GLANDA_VRAM_BASE  0x40000000
@@ -34,6 +38,11 @@ struct glanda_device {
     struct device *dev;
     void __iomem *vram_base;
     void __iomem *mmio_base;
+
+    // Char Device
+    dev_t cdev_num;
+    struct cdev cdev;
+    struct class *class;
 };
 
 // helper function to wait until hardware is idle (polling) //TODO remove when interrupt support is added
@@ -100,10 +109,57 @@ static void glanda_hw_draw_line(struct glanda_device *gdev,
     dev_info(gdev->dev, "CMD Sent: Line from (%d,%d) to (%d,%d) color 0x%x\n", x1, y1, x2, y2, color);
 }
 
+static long glanda_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+    struct glanda_device *gdev = file->private_data;
+    struct glanda_draw_rect_cmd user_cmd;
+
+    switch (cmd) {
+    case GLANDA_IOC_DRAW_RECT:
+        if (copy_from_user(&user_cmd, (void __user *)arg, sizeof(user_cmd))) {
+            return -EFAULT;
+        }
+
+        dev_info(gdev->dev, "IOCTL: Draw Rect %dx%d color %x\n", 
+                 user_cmd.w, user_cmd.h, user_cmd.color);
+        
+        glanda_hw_draw_rect(gdev, user_cmd.x, user_cmd.y, user_cmd.w, user_cmd.h, user_cmd.color);
+        break;
+    case GLANDA_IOC_DRAW_LINE:
+        if (copy_from_user(&user_cmd, (void __user *)arg, sizeof(user_cmd))) {
+            return -EFAULT;
+        }
+
+        dev_info(gdev->dev, "IOCTL: Draw Line %dx%d color %x\n", 
+                 user_cmd.w, user_cmd.h, user_cmd.color);
+        
+        glanda_hw_draw_line(gdev, user_cmd.x, user_cmd.y, user_cmd.w, user_cmd.h, user_cmd.color);
+        break;
+    default:
+        return -EINVAL;
+    }
+    return 0;
+}
+
+static int glanda_open(struct inode *inode, struct file *file)
+{
+    // get device pointer
+    struct glanda_device *gdev = container_of(inode->i_cdev, struct glanda_device, cdev);
+    file->private_data = gdev; // save for ioctl
+    return 0;
+}
+
+static const struct file_operations glanda_fops = {
+    .owner          = THIS_MODULE,
+    .open           = glanda_open,
+    .unlocked_ioctl = glanda_ioctl,
+};
+
 static int glandagpu_probe(struct platform_device *pdev)
 {
     struct resource *res;
     struct glanda_device *gdev;
+    int ret;
 
     dev_info(&pdev->dev, "GlandaGPU Probe started\n");
 
@@ -141,20 +197,46 @@ static int glandagpu_probe(struct platform_device *pdev)
     // Clear screen (CPU)
     memset_io(gdev->vram_base, 0, GLANDA_VRAM_SIZE); 
 
-    // Draw Red Rectangle
-    glanda_hw_draw_rect(gdev, 100, 100, 200, 150, 0xF00);
+    // Char Device
+    ret = alloc_chrdev_region(&gdev->cdev_num, 0, 1, "glandagpu");
+    if (ret < 0) {
+        dev_err(&pdev->dev, "Failed to alloc chrdev region\n");
+        return ret;
+    }
 
-    // Draw Yellow Rectangle
-    glanda_hw_draw_rect(gdev, 150, 150, 50, 50, 0xFF0);
+    cdev_init(&gdev->cdev, &glanda_fops);
+    gdev->cdev.owner = THIS_MODULE;
 
-    // Draw Green Line
-    glanda_hw_draw_line(gdev, 150, 150, 50, 50, 0x0F0);
+    ret = cdev_add(&gdev->cdev, gdev->cdev_num, 1);
+    if (ret < 0) {
+        unregister_chrdev_region(gdev->cdev_num, 1);
+        return ret;
+    }
 
+    // Create sysfs class and trigger udev to automatically create /dev/glandagpu
+    gdev->class = class_create("glanda_class");
+    if (IS_ERR(gdev->class)) {
+        cdev_del(&gdev->cdev);
+        unregister_chrdev_region(gdev->cdev_num, 1);
+        return PTR_ERR(gdev->class);
+    }
+    
+    device_create(gdev->class, NULL, gdev->cdev_num, NULL, "glandagpu");
+
+    dev_info(&pdev->dev, "GlandaGPU Initialized /dev/glandagpu created\n");
     return 0;
 }
 
 static void glandagpu_remove(struct platform_device *pdev)
 {
+    struct glanda_device *gdev = platform_get_drvdata(pdev);
+
+    // Clean up Char Device
+    device_destroy(gdev->class, gdev->cdev_num);
+    class_destroy(gdev->class);
+    cdev_del(&gdev->cdev);
+    unregister_chrdev_region(gdev->cdev_num, 1);
+
     dev_info(&pdev->dev, "Driver removed\n");
 }
 
