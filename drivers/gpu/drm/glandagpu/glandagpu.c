@@ -170,32 +170,60 @@ static void glanda_hw_draw_line(struct glanda_device *gdev,
     dev_info(gdev->dev, "CMD Sent: Line from (%d,%d) to (%d,%d) color 0x%x\n", x1, y1, x2, y2, color);
 }
 
+// Submit Clear Screen Command
+static void glanda_hw_clear(struct glanda_device *gdev, int color)
+{
+    u32 ctrl;
+
+    if (glanda_wait_idle(gdev)) return;
+
+    writel(color, gdev->mmio_base + REG_COLOR);
+
+    // start command
+    ctrl = CTRL_START | CMD_CLEAR;
+    writel(ctrl, gdev->mmio_base + REG_CTRL);
+    
+    dev_info(gdev->dev, "CMD Sent: Clear Screen color 0x%x\n", color);
+}
+
 static long glanda_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
     struct glanda_device *gdev = file->private_data;
-    struct glanda_draw_rect_cmd user_cmd;
+    struct glanda_draw_rect_cmd rect_cmd;
+    struct glanda_draw_line_cmd line_cmd;
+    struct glanda_clear_cmd clear_cmd;
 
     switch (cmd) {
+    case GLANDA_IOC_CLEAR:
+        if (copy_from_user(&clear_cmd, (void __user *)arg, sizeof(clear_cmd))) {
+            return -EFAULT;
+        }
+        
+        glanda_hw_clear(gdev, clear_cmd.color);
+        break;
+
     case GLANDA_IOC_DRAW_RECT:
-        if (copy_from_user(&user_cmd, (void __user *)arg, sizeof(user_cmd))) {
+        if (copy_from_user(&rect_cmd, (void __user *)arg, sizeof(rect_cmd))) {
             return -EFAULT;
         }
 
         dev_info(gdev->dev, "IOCTL: Draw Rect %dx%d color %x\n", 
-                 user_cmd.w, user_cmd.h, user_cmd.color);
+                 rect_cmd.w, rect_cmd.h, rect_cmd.color);
         
-        glanda_hw_draw_rect(gdev, user_cmd.x, user_cmd.y, user_cmd.w, user_cmd.h, user_cmd.color);
+        glanda_hw_draw_rect(gdev, rect_cmd.x, rect_cmd.y, rect_cmd.w, rect_cmd.h, rect_cmd.color);
         break;
+
     case GLANDA_IOC_DRAW_LINE:
-        if (copy_from_user(&user_cmd, (void __user *)arg, sizeof(user_cmd))) {
+        if (copy_from_user(&line_cmd, (void __user *)arg, sizeof(line_cmd))) {
             return -EFAULT;
         }
 
-        dev_info(gdev->dev, "IOCTL: Draw Line %dx%d color %x\n", 
-                 user_cmd.w, user_cmd.h, user_cmd.color);
+        dev_info(gdev->dev, "IOCTL: Draw Line (%d,%d)->(%d,%d) color %x\n", 
+                 line_cmd.x0, line_cmd.y0, line_cmd.x1, line_cmd.y1, line_cmd.color);
         
-        glanda_hw_draw_line(gdev, user_cmd.x, user_cmd.y, user_cmd.w, user_cmd.h, user_cmd.color);
+        glanda_hw_draw_line(gdev, line_cmd.x0, line_cmd.y0, line_cmd.x1, line_cmd.y1, line_cmd.color);
         break;
+
     default:
         return -EINVAL;
     }
