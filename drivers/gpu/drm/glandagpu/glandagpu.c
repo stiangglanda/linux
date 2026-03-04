@@ -12,6 +12,7 @@
 #include <linux/uaccess.h>
 #include <linux/interrupt.h>
 #include <linux/wait.h>
+#include <linux/mm.h>
 #include "glanda_uapi.h"
 
 // Hardware Constants
@@ -42,6 +43,7 @@
 struct glanda_device {
     struct device *dev;
     void __iomem *vram_base;
+    phys_addr_t vram_phys;
     void __iomem *mmio_base;
 
     int irq;
@@ -200,6 +202,25 @@ static long glanda_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
     return 0;
 }
 
+static int glanda_mmap(struct file *file, struct vm_area_struct *vma)
+{
+    struct glanda_device *gdev = file->private_data;
+    unsigned long size = vma->vm_end - vma->vm_start;
+
+    if (size > GLANDA_VRAM_SIZE)
+        return -EINVAL;
+
+    // Use non-cached for IO memory
+    vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot); 
+
+    if (remap_pfn_range(vma, vma->vm_start, 
+                        gdev->vram_phys >> PAGE_SHIFT, // Convert physical address to PFN (Page Frame Number)
+                        size, vma->vm_page_prot)) {
+        return -EAGAIN;
+    }
+    return 0;
+}
+
 static int glanda_open(struct inode *inode, struct file *file)
 {
     // get device pointer
@@ -211,6 +232,7 @@ static int glanda_open(struct inode *inode, struct file *file)
 static const struct file_operations glanda_fops = {
     .owner          = THIS_MODULE,
     .open           = glanda_open,
+    .mmap           = glanda_mmap,
     .unlocked_ioctl = glanda_ioctl,
 };
 
@@ -255,6 +277,7 @@ static int glandagpu_probe(struct platform_device *pdev)
         dev_err(&pdev->dev, "Failed to get VRAM resource\n");
         return -ENODEV;
     }
+    gdev->vram_phys = res->start;
     gdev->vram_base = devm_ioremap(&pdev->dev, res->start, resource_size(res));
     if (!gdev->vram_base) {
         return -ENOMEM;
