@@ -10,6 +10,8 @@
 #include <linux/fs.h>
 #include <linux/cdev.h>
 #include <linux/uaccess.h>
+#include <linux/interrupt.h>
+#include <linux/wait.h>
 #include "glanda_uapi.h"
 
 // Hardware Constants
@@ -28,6 +30,9 @@
 #define REG_IER     0x18
 
 // Bit Masks
+#define INT_DONE    (1 << 0)
+#define INT_VSYNC   (1 << 1)
+
 #define STATUS_BUSY (1 << 0)
 #define CMD_CLEAR   (0x1)
 #define CMD_RECT    (0x2)
@@ -39,28 +44,78 @@ struct glanda_device {
     void __iomem *vram_base;
     void __iomem *mmio_base;
 
+    int irq;
+    wait_queue_head_t cmd_wq;
+    bool cmd_done;
+
     // Char Device
     dev_t cdev_num;
     struct cdev cdev;
     struct class *class;
 };
 
-// helper function to wait until hardware is idle (polling) //TODO remove when interrupt support is added
+static irqreturn_t glanda_irq_handler(int irq, void *dev_id)
+{
+    struct glanda_device *gdev = dev_id;
+    u32 isr = readl(gdev->mmio_base + REG_ISR);
+
+    if (!isr) {
+        return IRQ_NONE;
+    }
+
+    if (isr & INT_DONE) {
+        gdev->cmd_done = true;
+        wake_up_interruptible(&gdev->cmd_wq);
+    } // TODO Handle VSYNC interrupt
+
+    // Clear interrupt(W1C)
+    writel(isr, gdev->mmio_base + REG_ISR);
+
+    return IRQ_HANDLED;
+}
+
+// helper function to wait until hardware is idle
 static int glanda_wait_idle(struct glanda_device *gdev)
 {
+    int ret;
     unsigned int status;
-    int timeout = 10000;
 
-    do {
-        status = readl(gdev->mmio_base + REG_STATUS);
-        if (!(status & STATUS_BUSY))
-            return 0;
-        
-        udelay(1);
-    } while (--timeout > 0);
+    status = readl(gdev->mmio_base + REG_STATUS);
+    if (!(status & STATUS_BUSY)) {
+        return 0;
+    }
 
-    dev_err(gdev->dev, "GlandaGPU: glanda_wait_idle timed out\n");
-    return -ETIMEDOUT;
+    // polling
+    if (gdev->irq < 0) {
+        int timeout = 10000;
+
+        do {
+            status = readl(gdev->mmio_base + REG_STATUS);
+            if (!(status & STATUS_BUSY)) {
+                return 0;
+            }
+            udelay(1);
+        } while (--timeout > 0);
+
+        dev_err(gdev->dev, "GlandaGPU: glanda_wait_idle polled timeout\n");
+        return -ETIMEDOUT;
+    }
+
+    gdev->cmd_done = false;
+
+    ret = wait_event_interruptible_timeout(
+        gdev->cmd_wq,
+        gdev->cmd_done || !(readl(gdev->mmio_base + REG_STATUS) & STATUS_BUSY),
+        msecs_to_jiffies(500)); // 500ms timeout
+
+    if (ret == 0) {
+        dev_err(gdev->dev, "GlandaGPU: glanda_wait_idle IRQ timeout\n");
+        return -ETIMEDOUT;
+    } else if (ret < 0) {
+        return ret; // Interrupted by signal
+    }
+
+    return 0;
 }
 
 // Submit Rectangle Command
@@ -69,7 +124,9 @@ static void glanda_hw_draw_rect(struct glanda_device *gdev,
 {
     u32 coord0, coord1, ctrl;
 
-    if (glanda_wait_idle(gdev)) return;
+    if (glanda_wait_idle(gdev)) {
+        return;
+    }
 
     //compact coordinates into 32-bit
     coord0 = (y << 16) | (x & 0x3FF);
@@ -92,7 +149,9 @@ static void glanda_hw_draw_line(struct glanda_device *gdev,
 {
     u32 coord0, coord1, ctrl;
 
-    if (glanda_wait_idle(gdev)) return;
+    if (glanda_wait_idle(gdev)) {
+        return;
+    }
 
     //compact coordinates into 32-bit
     coord0 = (y1 << 16) | (x1 & 0x3FF);
@@ -171,6 +230,25 @@ static int glandagpu_probe(struct platform_device *pdev)
     gdev->dev = &pdev->dev;
     platform_set_drvdata(pdev, gdev);
 
+    // Interrupt setup
+    init_waitqueue_head(&gdev->cmd_wq);
+    gdev->irq = -1;
+
+    // Fetch IRQ
+    ret = platform_get_irq(pdev, 0);
+    if (ret > 0) {
+        gdev->irq = ret;
+        ret = devm_request_irq(&pdev->dev, gdev->irq, glanda_irq_handler,
+                               IRQF_SHARED, "glandagpu", gdev);
+        if (ret) {
+            dev_err(&pdev->dev, "Failed to request IRQ %d\n", gdev->irq);
+            return ret;
+        }
+        dev_info(&pdev->dev, "IRQ %d requested successfully\n", gdev->irq);
+    } else {
+        dev_warn(&pdev->dev, "No IRQ found, driver will fall back to polling\n");
+    }
+
     // Map VRAM
     res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
     if (!res) {
@@ -190,6 +268,14 @@ static int glandagpu_probe(struct platform_device *pdev)
         return -ENOMEM;
     }
     dev_info(&pdev->dev, "MMIO mapped at 0x%p\n", gdev->mmio_base);
+
+    writel(0, gdev->mmio_base + REG_IER);
+    writel(INT_DONE | INT_VSYNC, gdev->mmio_base + REG_ISR);
+    
+    if (gdev->irq >= 0) {
+        // Enable Done Interrupt
+        writel(INT_DONE, gdev->mmio_base + REG_IER);
+    }
 
     // rendering Test
     dev_info(&pdev->dev, "Start Test\n");
@@ -231,6 +317,9 @@ static void glandagpu_remove(struct platform_device *pdev)
 {
     struct glanda_device *gdev = platform_get_drvdata(pdev);
 
+    // Disable interrupts
+    writel(0, gdev->mmio_base + REG_IER);
+
     // Clean up Char Device
     device_destroy(gdev->class, gdev->cdev_num);
     class_destroy(gdev->class);
@@ -270,6 +359,11 @@ static struct resource glandagpu_resources[] = {
         .start = GLANDA_MMIO_BASE,
         .end   = GLANDA_MMIO_BASE + GLANDA_MMIO_SIZE - 1,
         .flags = IORESOURCE_MEM,
+    },
+    [2] = { // IRQ
+        .start = 11,
+        .end   = 11,
+        .flags = IORESOURCE_IRQ,
     },
 };
 #endif
