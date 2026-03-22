@@ -14,6 +14,7 @@
 #include <linux/wait.h>
 #include <linux/mm.h>
 #include "glanda_uapi.h"
+#include <linux/mutex.h>
 
 // Hardware Constants
 #define GLANDA_VRAM_BASE  0x40000000
@@ -54,6 +55,8 @@ struct glanda_device {
     dev_t cdev_num;
     struct cdev cdev;
     struct class *class;
+
+    struct mutex lock;
 };
 
 static irqreturn_t glanda_irq_handler(int irq, void *dev_id)
@@ -121,13 +124,20 @@ static int glanda_wait_idle(struct glanda_device *gdev)
 }
 
 // Submit Rectangle Command
-static void glanda_hw_draw_rect(struct glanda_device *gdev, 
+static int glanda_hw_draw_rect(struct glanda_device *gdev, 
                                 int x, int y, int w, int h, int color)
 {
     u32 coord0, coord1, ctrl;
+    int ret;
 
-    if (glanda_wait_idle(gdev)) {
-        return;
+    if (mutex_lock_interruptible(&gdev->lock)) {
+        return -ERESTARTSYS;
+    }
+
+    ret = glanda_wait_idle(gdev);
+    if (ret) {
+        mutex_unlock(&gdev->lock);
+        return ret;
     }
 
     //compact coordinates into 32-bit
@@ -143,16 +153,26 @@ static void glanda_hw_draw_rect(struct glanda_device *gdev,
     writel(ctrl, gdev->mmio_base + REG_CTRL);
     
     dev_info(gdev->dev, "CMD Sent: Rect at %d,%d size %dx%d color 0x%x\n", x,y,w,h,color);
+
+    mutex_unlock(&gdev->lock);
+    return 0;
 }
 
 // Submit Line Command
-static void glanda_hw_draw_line(struct glanda_device *gdev, 
+static int glanda_hw_draw_line(struct glanda_device *gdev, 
                                 int x1, int y1, int x2, int y2, int color)
 {
     u32 coord0, coord1, ctrl;
+    int ret;
 
-    if (glanda_wait_idle(gdev)) {
-        return;
+    if (mutex_lock_interruptible(&gdev->lock)) {
+        return -ERESTARTSYS;
+    }
+
+    ret = glanda_wait_idle(gdev);
+    if (ret) {
+        mutex_unlock(&gdev->lock);
+        return ret;
     }
 
     //compact coordinates into 32-bit
@@ -168,14 +188,25 @@ static void glanda_hw_draw_line(struct glanda_device *gdev,
     writel(ctrl, gdev->mmio_base + REG_CTRL);
     
     dev_info(gdev->dev, "CMD Sent: Line from (%d,%d) to (%d,%d) color 0x%x\n", x1, y1, x2, y2, color);
+    mutex_unlock(&gdev->lock);
+    return 0;
 }
 
 // Submit Clear Screen Command
-static void glanda_hw_clear(struct glanda_device *gdev, int color)
+static int glanda_hw_clear(struct glanda_device *gdev, int color)
 {
     u32 ctrl;
+    int ret;
 
-    if (glanda_wait_idle(gdev)) return;
+    if (mutex_lock_interruptible(&gdev->lock)) {
+        return -ERESTARTSYS;
+    }
+
+    ret = glanda_wait_idle(gdev);
+    if (ret) {
+        mutex_unlock(&gdev->lock);
+        return ret;
+    }
 
     writel(color, gdev->mmio_base + REG_COLOR);
 
@@ -184,6 +215,8 @@ static void glanda_hw_clear(struct glanda_device *gdev, int color)
     writel(ctrl, gdev->mmio_base + REG_CTRL);
     
     dev_info(gdev->dev, "CMD Sent: Clear Screen color 0x%x\n", color);
+    mutex_unlock(&gdev->lock);
+    return 0;
 }
 
 static long glanda_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
@@ -199,7 +232,7 @@ static long glanda_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
             return -EFAULT;
         }
         
-        glanda_hw_clear(gdev, clear_cmd.color);
+        return glanda_hw_clear(gdev, clear_cmd.color);
         break;
 
     case GLANDA_IOC_DRAW_RECT:
@@ -210,7 +243,7 @@ static long glanda_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
         dev_info(gdev->dev, "IOCTL: Draw Rect %dx%d color %x\n", 
                  rect_cmd.w, rect_cmd.h, rect_cmd.color);
         
-        glanda_hw_draw_rect(gdev, rect_cmd.x, rect_cmd.y, rect_cmd.w, rect_cmd.h, rect_cmd.color);
+        return glanda_hw_draw_rect(gdev, rect_cmd.x, rect_cmd.y, rect_cmd.w, rect_cmd.h, rect_cmd.color);
         break;
 
     case GLANDA_IOC_DRAW_LINE:
@@ -221,7 +254,7 @@ static long glanda_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
         dev_info(gdev->dev, "IOCTL: Draw Line (%d,%d)->(%d,%d) color %x\n", 
                  line_cmd.x0, line_cmd.y0, line_cmd.x1, line_cmd.y1, line_cmd.color);
         
-        glanda_hw_draw_line(gdev, line_cmd.x0, line_cmd.y0, line_cmd.x1, line_cmd.y1, line_cmd.color);
+        return glanda_hw_draw_line(gdev, line_cmd.x0, line_cmd.y0, line_cmd.x1, line_cmd.y1, line_cmd.color);
         break;
 
     default:
@@ -279,6 +312,8 @@ static int glandagpu_probe(struct platform_device *pdev)
     }
     gdev->dev = &pdev->dev;
     platform_set_drvdata(pdev, gdev);
+
+    mutex_init(&gdev->lock);
 
     // Interrupt setup
     init_waitqueue_head(&gdev->cmd_wq);
