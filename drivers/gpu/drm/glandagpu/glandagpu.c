@@ -17,8 +17,10 @@
 #include <linux/mutex.h>
 
 // Hardware Constants
+#define GLANDA_WIDTH      640
+#define GLANDA_HEIGHT     480
 #define GLANDA_VRAM_BASE  0x40000000
-#define GLANDA_VRAM_SIZE  (640 * 480 * 4)
+#define GLANDA_VRAM_SIZE  (GLANDA_WIDTH * GLANDA_HEIGHT * 4)
 #define GLANDA_MMIO_BASE  0x40200000
 #define GLANDA_MMIO_SIZE  32
 
@@ -240,6 +242,13 @@ static long glanda_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
             return -EFAULT;
         }
 
+        if (rect_cmd.x >= GLANDA_WIDTH || rect_cmd.y >= GLANDA_HEIGHT ||
+            rect_cmd.w > GLANDA_WIDTH || rect_cmd.h > GLANDA_HEIGHT ||
+            rect_cmd.x + rect_cmd.w > GLANDA_WIDTH ||
+            rect_cmd.y + rect_cmd.h > GLANDA_HEIGHT) {
+            return -EINVAL;
+        }
+
         dev_info(gdev->dev, "IOCTL: Draw Rect %dx%d color %x\n", 
                  rect_cmd.w, rect_cmd.h, rect_cmd.color);
         
@@ -249,6 +258,11 @@ static long glanda_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
     case GLANDA_IOC_DRAW_LINE:
         if (copy_from_user(&line_cmd, (void __user *)arg, sizeof(line_cmd))) {
             return -EFAULT;
+        }
+
+        if (line_cmd.x0 >= GLANDA_WIDTH || line_cmd.y0 >= GLANDA_HEIGHT ||
+            line_cmd.x1 >= GLANDA_WIDTH || line_cmd.y1 >= GLANDA_HEIGHT) {
+            return -EINVAL;
         }
 
         dev_info(gdev->dev, "IOCTL: Draw Line (%d,%d)->(%d,%d) color %x\n", 
