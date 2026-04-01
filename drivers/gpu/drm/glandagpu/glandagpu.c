@@ -19,10 +19,15 @@
 // Hardware Constants
 #define GLANDA_WIDTH      640
 #define GLANDA_HEIGHT     480
-#define GLANDA_VRAM_BASE  0x40000000
 #define GLANDA_VRAM_SIZE  (GLANDA_WIDTH * GLANDA_HEIGHT * 4)
-#define GLANDA_MMIO_BASE  0x40200000
 #define GLANDA_MMIO_SIZE  32
+#define GLANDA_MMIO_OFFSET 0x00200000
+
+// Base addresses (x86 testing)
+#define BRIDGE_BASE       0xC0000000
+#define GLANDA_VRAM_BASE  (BRIDGE_BASE + 0x00000000)
+#define GLANDA_MMIO_BASE  (BRIDGE_BASE + GLANDA_MMIO_OFFSET)
+#define GLANDA_BASE_SIZE  BRIDGE_BASE + 0x01000000 - 1
 
 // Register Offsets
 #define REG_STATUS  0x00
@@ -351,19 +356,18 @@ static int glandagpu_probe(struct platform_device *pdev)
     // Map VRAM
     res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
     if (!res) {
-        dev_err(&pdev->dev, "Failed to get VRAM resource\n");
+        dev_err(&pdev->dev, "Failed to get VRAM/MMIO resource\n");
         return -ENODEV;
     }
     gdev->vram_phys = res->start;
-    gdev->vram_base = devm_ioremap(&pdev->dev, res->start, resource_size(res));
+    gdev->vram_base = devm_ioremap(&pdev->dev, res->start, GLANDA_VRAM_SIZE);
     if (!gdev->vram_base) {
         return -ENOMEM;
     }
     dev_info(&pdev->dev, "VRAM mapped at 0x%p\n", gdev->vram_base);
 
     // Map MMIO
-    res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
-    gdev->mmio_base = devm_ioremap(&pdev->dev, res->start, resource_size(res));
+    gdev->mmio_base = devm_ioremap(&pdev->dev, res->start + GLANDA_MMIO_OFFSET, GLANDA_MMIO_SIZE);
     if (!gdev->mmio_base) {
         return -ENOMEM;
     }
@@ -431,7 +435,7 @@ static void glandagpu_remove(struct platform_device *pdev)
 
 // Device Tree Match
 static const struct of_device_id glanda_of_match[] = {
-    { .compatible = "glanda,glandagpu", },
+    { .compatible = "glanda,gpu-1.0", },
     { /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, glanda_of_match);
@@ -450,17 +454,12 @@ static struct platform_driver glandagpu_driver = {
 static struct platform_device *pdev_x86;
 
 static struct resource glandagpu_resources[] = {
-    [0] = { // VRAM
-        .start = GLANDA_VRAM_BASE,
-        .end   = GLANDA_VRAM_BASE + GLANDA_VRAM_SIZE - 1,
+    [0] = { // Single Resource covering VRAM and MMIO
+        .start = BRIDGE_BASE,
+        .end   = GLANDA_BASE_SIZE, // Size from DTS
         .flags = IORESOURCE_MEM,
     },
-    [1] = { // MMIO
-        .start = GLANDA_MMIO_BASE,
-        .end   = GLANDA_MMIO_BASE + GLANDA_MMIO_SIZE - 1,
-        .flags = IORESOURCE_MEM,
-    },
-    [2] = { // IRQ
+    [1] = { // IRQ
         .start = 11,
         .end   = 11,
         .flags = IORESOURCE_IRQ,
