@@ -14,4 +14,5 @@ dtb-$(CONFIG_ARCH_INTEL_SOCFPGA) += \
 	socfpga_cyclone5_socrates.dtb \
 	socfpga_cyclone5_sodia.dtb \
 	socfpga_cyclone5_vining_fpga.dtb \
+	socfpga_cyclone5_de10_standard.dtb \
 	socfpga_vt.dtb

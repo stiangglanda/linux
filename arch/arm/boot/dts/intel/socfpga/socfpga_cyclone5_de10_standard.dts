@@ -1,0 +1,209 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Terasic DE10-Standard (Cyclone V SoC 5CSXFC6D6)
+ * Portiert von linux-socfpga socfpga-4.5 (sopc2dts-generiert) auf mainline v6.12.
+ *
+ * Basis: socfpga_cyclone5.dtsi (verifiziert gegen torvalds/linux v6.12)
+ * Vorlage für Board-Overrides: socfpga_cyclone5_de0_nano_soc.dts (nächstliegendes
+ * Referenzboard in mainline, da keine offizielle DE10-Standard-DTS existiert)
+ *
+ * WICHTIG: Diese Datei geht davon aus, dass Bitstream + HPS<->FPGA-Bridges
+ * bereits VOR dem Linux-Boot (Preloader/U-Boot) programmiert bzw. enabled
+ * wurden. Die fpga_bridge0-3 / fpgamgr0 / base_fpga_region Nodes aus
+ * socfpga_cyclone5.dtsi werden deshalb NICHT angefasst - sie sind ohnehin nur
+ * Enable/Reset-Register für den FPGA-Manager-Reprogrammier-Workflow, nicht die
+ * tatsächlichen AXI-Adressfenster.
+ *
+ * TODO / bitte gegen eure Hardware verifizieren (siehe Kommentare unten):
+ *  - GPIO-Bank-Zuordnung fuer LEDs (porta/portb/portc)
+ *  - cd-gpios/vmmc-supply fuer mmc0, falls abweichend vom De0-Nano-Soc-Referenzdesign
+ *  - IRQ-Nummer/Flags des GPU-Nodes (aus eurem sopc2dts-Dump uebernommen, sollte
+ *    stabil sein, da reine GIC-SPI-Nummer aus eurem Qsys-Design)
+ */
+
+#include "socfpga_cyclone5.dtsi"
+
+/ {
+	model = "Terasic DE10-Standard";
+	compatible = "altr,socfpga-cyclone5", "altr,socfpga";
+
+	chosen {
+		bootargs = "console=ttyS0,115200n8 earlyprintk";
+		stdout-path = "serial0:115200n8";
+	};
+
+	/* DE10-Standard: 1 GiB DDR3. Euer altes sopc2dts-DTB hatte hier einen
+	 * kaputten/unplausiblen zweiten Range-Eintrag - korrigiert auf 1GB @ 0x0,
+	 * analog zum de0_nano_soc-Referenzdesign. Falls euer Board tatsaechlich
+	 * eine andere DDR3-Bestueckung hat, hier anpassen. */
+	memory@0 {
+		device_type = "memory";
+		reg = <0x0 0x40000000>; /* 1 GiB */
+	};
+
+	aliases {
+		/* bestaetigt: gmac1 = ethernet@ff702000, entspricht eurem
+		 * aktiven ethernet-Node (status=okay, rgmii) im Original-DTS */
+		ethernet0 = &gmac1;
+	};
+
+	regulator_3_3v: regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "3.3V";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		/* TODO: GPIO-Bank + Pin-Nummern gegen euer Board/Qsys-Design
+		 * verifizieren - aus eurem Original-DTS uebernommen, aber die
+		 * phandle-Referenz (0x23) war im Dump nicht eindeutig aufloesbar. */
+		led-hps0 {
+			label = "hps_led0";
+			gpios = <&portb 24 0>;
+		};
+	};
+
+	/*
+	 * ---------------------------------------------------------------
+	 * FPGA-Fabric-Seite: 1:1 aus eurem sopc2dts-generierten 4.5-DTS
+	 * uebernommen. Dieser Block ist self-contained (eigene ranges/
+	 * Adressuebersetzung) und haengt NICHT von socfpga.dtsi's
+	 * fpga_bridge0-3 ab - daher unveraendert portierbar.
+	 * ---------------------------------------------------------------
+	 */
+	bridge@c0000000 {
+		compatible = "simple-bus";
+		reg = <0xc0000000 0x20000000>, <0xff200000 0x200000>;
+		reg-names = "axi_h2f", "axi_h2f_lw";
+		clocks = <&osc1>, <&osc1>, <&osc1>;
+		clock-names = "h2f_axi_clock", "h2f_lw_axi_clock", "f2h_sdram0_clock";
+		#address-cells = <2>;
+		#size-cells = <1>;
+		ranges = <0x0 0x00000   0xc0000000 0x1000000>,   /* H2F: GPU-Fenster, 16 MB */
+			 <0x1 0x20000   0xff220000 0x8>,
+			 <0x1 0x01000   0xff201000 0x8>,
+			 <0x1 0x05000   0xff205000 0x10>,
+			 <0x1 0x03000   0xff203000 0x10>,
+			 <0x1 0x04000   0xff204000 0x10>,
+			 <0x1 0x35000   0xff235000 0x20>;
+
+		gpu@0 {
+			compatible = "glanda,gpu-1.0";
+			reg = <0x0 0x0 0x1000000>;
+			interrupt-parent = <&intc>;
+			interrupts = <0 43 4>;	/* GIC SPI 43, level-high - aus eurem Dump: 0x2b = 43 */
+			clocks = <&osc1>;
+		};
+
+		serial@100020000 {
+			compatible = "altr,juart-1.0";
+			reg = <0x1 0x20000 0x8>;
+			clocks = <&osc1>;
+		};
+
+		sysid@100001000 {
+			/* Kein mainline-Treiber fuer "altr,sysid-1.0" vorhanden -
+			 * Node bindet an nichts, ist aber harmlos. Nur relevant,
+			 * falls ihr selbst einen sysid-Treiber mitbringt. */
+			compatible = "altr,sysid-1.0";
+			reg = <0x1 0x1000 0x8>;
+			clocks = <&osc1>;
+			id = <0xacd51302>;
+			timestamp = <0x59322c34>;
+		};
+
+		gpio@100005000 {
+			compatible = "altr,pio-1.0";
+			reg = <0x1 0x5000 0x10>;
+			interrupt-parent = <&intc>;
+			interrupts = <0 40 1>;
+			clocks = <&osc1>;
+			altr,gpio-bank-width = <4>;
+			altr,interrupt-type = <3>;
+			#gpio-cells = <2>;
+			gpio-controller;
+		};
+
+		gpio@100003000 {
+			compatible = "altr,pio-1.0";
+			reg = <0x1 0x3000 0x10>;
+			clocks = <&osc1>;
+			altr,gpio-bank-width = <10>;
+			#gpio-cells = <2>;
+			gpio-controller;
+		};
+
+		gpio@100004000 {
+			compatible = "altr,pio-1.0";
+			reg = <0x1 0x4000 0x10>;
+			interrupt-parent = <&intc>;
+			interrupts = <0 41 1>;
+			clocks = <&osc1>;
+			altr,gpio-bank-width = <10>;
+			altr,interrupt-type = <3>;
+			#gpio-cells = <2>;
+			gpio-controller;
+		};
+
+		spi@100035000 {
+			compatible = "altr,spi-1.0";
+			reg = <0x1 0x35000 0x20>;
+			interrupt-parent = <&intc>;
+			interrupts = <0 42 4>;
+			clocks = <&osc1>;
+		};
+	};
+};
+
+/* Externer 50 MHz Board-Oszillator - Wert aus eurem Original-DTS
+ * (0x2faf080 = 50.000.000 Hz) uebernommen. "clkmgr" ist kein Label in
+ * socfpga.dtsi, daher Override ueber vollen Node-Pfad (wie im
+ * de0_nano_soc.dts-Original zu sehen). */
+/ {
+	soc {
+		clkmgr@ffd04000 {
+			clocks {
+				osc1 {
+					clock-frequency = <25000000>;
+				};
+			};
+		};
+	};
+};
+
+&gmac1 {
+	status = "okay";
+	phy-mode = "rgmii";
+	/* TODO: txd/rxd-skew-ps aus eurem Original-DTS uebernehmen bzw. gegen
+	 * PHY-Datenblatt/Board-Schaltplan pruefen - im de0_nano_soc-Referenzwert
+	 * hier nur als Platzhalter uebernommen. */
+	max-frame-size = <3800>;
+};
+
+&gpio0 {
+	status = "okay";
+};
+
+&gpio1 {
+	status = "okay";
+};
+
+&gpio2 {
+	status = "okay";
+};
+
+&mmc0 {
+	vmmc-supply = <&regulator_3_3v>;
+	vqmmc-supply = <&regulator_3_3v>;
+	status = "okay";
+};
+
+&uart0 {
+	status = "okay";
+};
+
+&usb1 {
+	status = "okay";
+};
