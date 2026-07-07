@@ -16,6 +16,12 @@
 #include "glanda_uapi.h"
 #include <linux/mutex.h>
 
+#include <drm/drm_drv.h>
+#include <drm/drm_device.h>
+#include <drm/drm_file.h>
+#include <drm/drm_gem.h>
+#include <drm/drm_ioctl.h>
+
 // Hardware Constants
 #define GLANDA_WIDTH      640
 #define GLANDA_HEIGHT     480
@@ -48,9 +54,10 @@
 #define CMD_LINE    (0x3)
 #define CTRL_START  (1 << 4)
 
-static struct glanda_device *g_gdev = NULL;
+//static struct glanda_device *g_gdev = NULL;
 
 struct glanda_device {
+    struct drm_device drm;
     void __iomem *mmio_base;    // Pointer (4 Byte)
     void __iomem *vram_base;    // Pointer zuerst (4 Byte)
     struct device *dev;         // Pointer (4 Byte)
@@ -60,10 +67,20 @@ struct glanda_device {
     wait_queue_head_t cmd_wq;
     bool cmd_done;
 
-    dev_t cdev_num;
-    struct cdev cdev;
-    struct class *class;
     struct mutex lock;
+};
+
+#define to_glanda(dev) container_of(dev, struct glanda_device, drm)
+
+DEFINE_DRM_GEM_FOPS(glanda_drm_fops);
+
+static const struct drm_driver glanda_drm_driver = {
+    .driver_features    = DRIVER_GEM, // Wichtig: Aktiviert Memory Management (später benötigt)
+    .name               = "glandagpu",
+    .desc               = "GlandaGPU Hardware Accelerated DRM Driver",
+    .major              = 1,
+    .minor              = 0,
+    .fops               = &glanda_drm_fops,
 };
 
 static irqreturn_t glanda_irq_handler(int irq, void *dev_id)
@@ -88,6 +105,8 @@ static irqreturn_t glanda_irq_handler(int irq, void *dev_id)
 
     return IRQ_HANDLED;
 }
+
+/*
 
 // helper function to wait until hardware is idle
 static int glanda_wait_idle(struct glanda_device *gdev)
@@ -228,96 +247,7 @@ static int glanda_hw_clear(struct glanda_device *gdev, int color)
     mutex_unlock(&gdev->lock);
     return 0;
 }
-
-static long glanda_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
-{
-    struct glanda_device *gdev = file->private_data;
-    struct glanda_draw_rect_cmd rect_cmd;
-    struct glanda_draw_line_cmd line_cmd;
-    struct glanda_clear_cmd clear_cmd;
-
-    switch (cmd) {
-    case GLANDA_IOC_CLEAR:
-        if (copy_from_user(&clear_cmd, (void __user *)arg, sizeof(clear_cmd))) {
-            return -EFAULT;
-        }
-        
-        return glanda_hw_clear(gdev, clear_cmd.color);
-        break;
-
-    case GLANDA_IOC_DRAW_RECT:
-        if (copy_from_user(&rect_cmd, (void __user *)arg, sizeof(rect_cmd))) {
-            return -EFAULT;
-        }
-
-        if (rect_cmd.x >= GLANDA_WIDTH || rect_cmd.y >= GLANDA_HEIGHT ||
-            rect_cmd.w > GLANDA_WIDTH || rect_cmd.h > GLANDA_HEIGHT ||
-            rect_cmd.x + rect_cmd.w > GLANDA_WIDTH ||
-            rect_cmd.y + rect_cmd.h > GLANDA_HEIGHT) {
-            return -EINVAL;
-        }
-
-        dev_info(gdev->dev, "IOCTL: Draw Rect %dx%d color %x\n", 
-                 rect_cmd.w, rect_cmd.h, rect_cmd.color);
-        
-        return glanda_hw_draw_rect(gdev, rect_cmd.x, rect_cmd.y, rect_cmd.w, rect_cmd.h, rect_cmd.color);
-        break;
-
-    case GLANDA_IOC_DRAW_LINE:
-        if (copy_from_user(&line_cmd, (void __user *)arg, sizeof(line_cmd))) {
-            return -EFAULT;
-        }
-
-        if (line_cmd.x0 >= GLANDA_WIDTH || line_cmd.y0 >= GLANDA_HEIGHT ||
-            line_cmd.x1 >= GLANDA_WIDTH || line_cmd.y1 >= GLANDA_HEIGHT) {
-            return -EINVAL;
-        }
-
-        dev_info(gdev->dev, "IOCTL: Draw Line (%d,%d)->(%d,%d) color %x\n", 
-                 line_cmd.x0, line_cmd.y0, line_cmd.x1, line_cmd.y1, line_cmd.color);
-        
-        return glanda_hw_draw_line(gdev, line_cmd.x0, line_cmd.y0, line_cmd.x1, line_cmd.y1, line_cmd.color);
-        break;
-
-    default:
-        return -EINVAL;
-    }
-    return 0;
-}
-
-static int glanda_mmap(struct file *file, struct vm_area_struct *vma)
-{
-    struct glanda_device *gdev = file->private_data;
-    unsigned long size = vma->vm_end - vma->vm_start;
-
-    if (size > GLANDA_VRAM_SIZE)
-        return -EINVAL;
-
-    // Use non-cached for IO memory
-    vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
-
-    if (remap_pfn_range(vma, vma->vm_start, 
-                        gdev->vram_phys >> PAGE_SHIFT, // Convert physical address to PFN (Page Frame Number)
-                        size, vma->vm_page_prot)) {
-        return -EAGAIN;
-    }
-    return 0;
-}
-
-static int glanda_open(struct inode *inode, struct file *file)
-{
-    // get device pointer
-    if (!g_gdev) return -ENODEV;
-    file->private_data = g_gdev; 
-    return 0;
-}
-
-static const struct file_operations glanda_fops = {
-    .owner          = THIS_MODULE,
-    .open           = glanda_open,
-    .mmap           = glanda_mmap,
-    .unlocked_ioctl = glanda_ioctl,
-};
+*/
 
 static int glandagpu_probe(struct platform_device *pdev)
 {
@@ -327,12 +257,11 @@ static int glandagpu_probe(struct platform_device *pdev)
 
     dev_info(&pdev->dev, "GlandaGPU Probe started\n");
 
-    // create device structure
-    gdev = devm_kzalloc(&pdev->dev, sizeof(*gdev), GFP_KERNEL);
-    if (!gdev) {
-        return -ENOMEM;
+    gdev = devm_drm_dev_alloc(&pdev->dev, &glanda_drm_driver, struct glanda_device, drm);
+    if (IS_ERR(gdev)) {
+        return PTR_ERR(gdev);
     }
-    g_gdev = gdev; 
+
     gdev->dev = &pdev->dev;
     platform_set_drvdata(pdev, gdev);
 
@@ -370,35 +299,13 @@ static int glandagpu_probe(struct platform_device *pdev)
         dev_warn(&pdev->dev, "No IRQ found, falling back to polling\n");
     }
 
-    // memset_io(gdev->vram_base, 0, GLANDA_VRAM_SIZE); 
-
-    // Char Device
-    ret = alloc_chrdev_region(&gdev->cdev_num, 0, 1, "glandagpu");
-    if (ret < 0) {
-        dev_err(&pdev->dev, "Failed to alloc chrdev region\n");
+    ret = drm_dev_register(&gdev->drm, 0);
+    if (ret) {
+        dev_err(&pdev->dev, "Failed to register DRM device\n");
         return ret;
     }
 
-    cdev_init(&gdev->cdev, &glanda_fops);
-    gdev->cdev.owner = THIS_MODULE;
-
-    ret = cdev_add(&gdev->cdev, gdev->cdev_num, 1);
-    if (ret < 0) {
-        unregister_chrdev_region(gdev->cdev_num, 1);
-        return ret;
-    }
-
-    // Create sysfs class and trigger udev to automatically create /dev/glandagpu
-    gdev->class = class_create("glanda_class");
-    if (IS_ERR(gdev->class)) {
-        cdev_del(&gdev->cdev);
-        unregister_chrdev_region(gdev->cdev_num, 1);
-        return PTR_ERR(gdev->class);
-    }
-    
-    device_create(gdev->class, NULL, gdev->cdev_num, NULL, "glandagpu");
-
-    dev_info(&pdev->dev, "GlandaGPU Initialized /dev/glandagpu created\n");
+    dev_info(&pdev->dev, "GlandaGPU DRM Initialized (/dev/dri/cardX created)\n");
     return 0;
 }
 
@@ -406,16 +313,13 @@ static void glandagpu_remove(struct platform_device *pdev)
 {
     struct glanda_device *gdev = platform_get_drvdata(pdev);
 
+    drm_dev_unregister(&gdev->drm);
+
     // Disable interrupts
     writel(0, gdev->mmio_base + REG_IER);
 
-    // Clean up Char Device
-    device_destroy(gdev->class, gdev->cdev_num);
-    class_destroy(gdev->class);
-    cdev_del(&gdev->cdev);
-    unregister_chrdev_region(gdev->cdev_num, 1);
-
-    dev_info(&pdev->dev, "Driver removed\n");
+    dev_info(&pdev->dev, "GlandaGPU DRM Driver removed\n");
+    
 }
 
 // Device Tree Match
