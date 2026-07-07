@@ -48,27 +48,30 @@
 #define CMD_LINE    (0x3)
 #define CTRL_START  (1 << 4)
 
-struct glanda_device {
-    struct device *dev;
-    void __iomem *vram_base;
-    phys_addr_t vram_phys;
-    void __iomem *mmio_base;
+static struct glanda_device *g_gdev = NULL;
 
+struct glanda_device {
+    void __iomem *mmio_base;    // Pointer (4 Byte)
+    void __iomem *vram_base;    // Pointer zuerst (4 Byte)
+    struct device *dev;         // Pointer (4 Byte)
+    phys_addr_t vram_phys;      // phys_addr_t kann 4 oder 8 Byte sein -> ans Ende!
+    
     int irq;
     wait_queue_head_t cmd_wq;
     bool cmd_done;
 
-    // Char Device
     dev_t cdev_num;
     struct cdev cdev;
     struct class *class;
-
     struct mutex lock;
 };
 
 static irqreturn_t glanda_irq_handler(int irq, void *dev_id)
 {
     struct glanda_device *gdev = dev_id;
+    if (!gdev || !gdev->mmio_base) {
+        return IRQ_NONE;
+    }
     u32 isr = readl(gdev->mmio_base + REG_ISR);
 
     if (!isr) {
@@ -291,7 +294,7 @@ static int glanda_mmap(struct file *file, struct vm_area_struct *vma)
         return -EINVAL;
 
     // Use non-cached for IO memory
-    vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot); 
+    vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
 
     if (remap_pfn_range(vma, vma->vm_start, 
                         gdev->vram_phys >> PAGE_SHIFT, // Convert physical address to PFN (Page Frame Number)
@@ -304,8 +307,8 @@ static int glanda_mmap(struct file *file, struct vm_area_struct *vma)
 static int glanda_open(struct inode *inode, struct file *file)
 {
     // get device pointer
-    struct glanda_device *gdev = container_of(inode->i_cdev, struct glanda_device, cdev);
-    file->private_data = gdev; // save for ioctl
+    if (!g_gdev) return -ENODEV;
+    file->private_data = g_gdev; 
     return 0;
 }
 
@@ -329,6 +332,7 @@ static int glandagpu_probe(struct platform_device *pdev)
     if (!gdev) {
         return -ENOMEM;
     }
+    g_gdev = gdev; 
     gdev->dev = &pdev->dev;
     platform_set_drvdata(pdev, gdev);
 
@@ -338,7 +342,18 @@ static int glandagpu_probe(struct platform_device *pdev)
     init_waitqueue_head(&gdev->cmd_wq);
     gdev->irq = -1;
 
-    // Fetch IRQ
+    // Map VRAM
+    res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+    if (!res) return -ENODEV;
+    gdev->vram_phys = res->start;
+    gdev->vram_base = devm_ioremap(&pdev->dev, res->start, GLANDA_VRAM_SIZE);
+    gdev->mmio_base = devm_ioremap(&pdev->dev, res->start + GLANDA_MMIO_OFFSET, GLANDA_MMIO_SIZE);
+    
+    if (!gdev->vram_base || !gdev->mmio_base) return -ENOMEM;
+
+    writel(0, gdev->mmio_base + REG_IER);
+    writel(0xFFFFFFFF, gdev->mmio_base + REG_ISR); // Alle alten Flags löschen
+
     ret = platform_get_irq(pdev, 0);
     if (ret > 0) {
         gdev->irq = ret;
@@ -348,44 +363,14 @@ static int glandagpu_probe(struct platform_device *pdev)
             dev_err(&pdev->dev, "Failed to request IRQ %d\n", gdev->irq);
             return ret;
         }
-        dev_info(&pdev->dev, "IRQ %d requested successfully\n", gdev->irq);
-    } else {
-        dev_warn(&pdev->dev, "No IRQ found, driver will fall back to polling\n");
-    }
-
-    // Map VRAM
-    res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-    if (!res) {
-        dev_err(&pdev->dev, "Failed to get VRAM/MMIO resource\n");
-        return -ENODEV;
-    }
-    gdev->vram_phys = res->start;
-    gdev->vram_base = devm_ioremap(&pdev->dev, res->start, GLANDA_VRAM_SIZE);
-    if (!gdev->vram_base) {
-        return -ENOMEM;
-    }
-    dev_info(&pdev->dev, "VRAM mapped at 0x%p\n", gdev->vram_base);
-
-    // Map MMIO
-    gdev->mmio_base = devm_ioremap(&pdev->dev, res->start + GLANDA_MMIO_OFFSET, GLANDA_MMIO_SIZE);
-    if (!gdev->mmio_base) {
-        return -ENOMEM;
-    }
-    dev_info(&pdev->dev, "MMIO mapped at 0x%p\n", gdev->mmio_base);
-
-    writel(0, gdev->mmio_base + REG_IER);
-    writel(INT_DONE | INT_VSYNC, gdev->mmio_base + REG_ISR);
-    
-    if (gdev->irq >= 0) {
-        // Enable Done Interrupt
+        
         writel(INT_DONE, gdev->mmio_base + REG_IER);
+        dev_info(&pdev->dev, "IRQ %d requested and enabled\n", gdev->irq);
+    } else {
+        dev_warn(&pdev->dev, "No IRQ found, falling back to polling\n");
     }
 
-    // rendering Test
-    dev_info(&pdev->dev, "Start Test\n");
-
-    // Clear screen (CPU)
-    memset_io(gdev->vram_base, 0, GLANDA_VRAM_SIZE); 
+    // memset_io(gdev->vram_base, 0, GLANDA_VRAM_SIZE); 
 
     // Char Device
     ret = alloc_chrdev_region(&gdev->cdev_num, 0, 1, "glandagpu");
