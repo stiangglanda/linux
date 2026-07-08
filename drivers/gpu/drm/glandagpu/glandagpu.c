@@ -21,6 +21,7 @@
 #include <drm/drm_file.h>
 #include <drm/drm_gem.h>
 #include <drm/drm_ioctl.h>
+#include <drm/drm_gem_shmem_helper.h>
 
 // Hardware Constants
 #define GLANDA_WIDTH      640
@@ -72,15 +73,26 @@ struct glanda_device {
 
 #define to_glanda(dev) container_of(dev, struct glanda_device, drm)
 
-DEFINE_DRM_GEM_FOPS(glanda_drm_fops);
+static const struct file_operations glanda_drm_fops = {
+    .owner          = THIS_MODULE,
+    .open           = drm_open,
+    .release        = drm_release,
+    .unlocked_ioctl = drm_ioctl,
+    .compat_ioctl   = drm_compat_ioctl,
+    .poll           = drm_poll,
+    .read           = drm_read,
+    .llseek         = noop_llseek,
+    .mmap           = drm_gem_mmap,
+};
 
 static const struct drm_driver glanda_drm_driver = {
-    .driver_features    = DRIVER_GEM, // Wichtig: Aktiviert Memory Management (später benötigt)
+    .driver_features    = DRIVER_GEM,
     .name               = "glandagpu",
     .desc               = "GlandaGPU Hardware Accelerated DRM Driver",
     .major              = 1,
     .minor              = 0,
     .fops               = &glanda_drm_fops,
+    .dumb_create        = drm_gem_shmem_dumb_create,
 };
 
 static irqreturn_t glanda_irq_handler(int irq, void *dev_id)
