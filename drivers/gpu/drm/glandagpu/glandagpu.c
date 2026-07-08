@@ -88,12 +88,11 @@ static int glanda_connector_get_modes(struct drm_connector *connector)
 {
     struct drm_display_mode *mode;
 
-    // Erstelle ein neues Mode-Objekt
     mode = drm_mode_create(connector->dev);
     if (!mode)
         return 0;
 
-    // VGA-Standard-Timing für 640x480 @ 60 Hz befüllen
+    // VGA-Standard 640x480 @ 60 Hz
     mode->hdisplay = 640;
     mode->hsync_start = 656;
     mode->hsync_end = 752;
@@ -107,12 +106,12 @@ static int glanda_connector_get_modes(struct drm_connector *connector)
     mode->clock = 25175; // 25.175 MHz Pixelclock
 
     mode->flags = DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC;
-    mode->type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED; // Als Standard definieren
+    mode->type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
 
     drm_mode_set_name(mode);
     drm_mode_probed_add(connector, mode);
 
-    return 1; // 1 Modus erfolgreich hinzugefügt
+    return 1;
 }
 
 static const struct drm_connector_helper_funcs glanda_connector_helper_funcs = {
@@ -127,9 +126,8 @@ static const struct drm_connector_funcs glanda_connector_funcs = {
     .atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
 };
 
-// 2. Globale Mode-Config Funktionen (erforderlich für atomic commits)
 static const struct drm_mode_config_funcs glanda_mode_config_funcs = {
-    .fb_create = drm_gem_fb_create, // Standard GEM Helper für Framebuffer-Erstellung
+    .fb_create = drm_gem_fb_create, // Standard GEM Helper
     .atomic_check = drm_atomic_helper_check,
     .atomic_commit = drm_atomic_helper_commit,
 };
