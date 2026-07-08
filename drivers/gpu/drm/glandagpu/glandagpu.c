@@ -23,6 +23,14 @@
 #include <drm/drm_ioctl.h>
 #include <drm/drm_gem_shmem_helper.h>
 
+#include <drm/drm_connector.h>
+#include <drm/drm_encoder.h>
+#include <drm/drm_modeset_helper.h>
+#include <drm/drm_probe_helper.h>
+#include <drm/drm_simple_kms_helper.h>
+#include <drm/drm_gem_framebuffer_helper.h>
+#include <drm/drm_atomic_helper.h>
+
 // Hardware Constants
 #define GLANDA_WIDTH      640
 #define GLANDA_HEIGHT     480
@@ -69,9 +77,62 @@ struct glanda_device {
     bool cmd_done;
 
     struct mutex lock;
+
+    struct drm_encoder encoder;
+    struct drm_connector connector;
 };
 
 #define to_glanda(dev) container_of(dev, struct glanda_device, drm)
+
+static int glanda_connector_get_modes(struct drm_connector *connector)
+{
+    struct drm_display_mode *mode;
+
+    // Erstelle ein neues Mode-Objekt
+    mode = drm_mode_create(connector->dev);
+    if (!mode)
+        return 0;
+
+    // VGA-Standard-Timing für 640x480 @ 60 Hz befüllen
+    mode->hdisplay = 640;
+    mode->hsync_start = 656;
+    mode->hsync_end = 752;
+    mode->htotal = 800;
+
+    mode->vdisplay = 480;
+    mode->vsync_start = 490;
+    mode->vsync_end = 492;
+    mode->vtotal = 525;
+
+    mode->clock = 25175; // 25.175 MHz Pixelclock
+
+    mode->flags = DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC;
+    mode->type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED; // Als Standard definieren
+
+    drm_mode_set_name(mode);
+    drm_mode_probed_add(connector, mode);
+
+    return 1; // 1 Modus erfolgreich hinzugefügt
+}
+
+static const struct drm_connector_helper_funcs glanda_connector_helper_funcs = {
+    .get_modes = glanda_connector_get_modes,
+};
+
+static const struct drm_connector_funcs glanda_connector_funcs = {
+    .fill_modes = drm_helper_probe_single_connector_modes,
+    .destroy = drm_connector_cleanup,
+    .reset = drm_atomic_helper_connector_reset,
+    .atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,
+    .atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
+};
+
+// 2. Globale Mode-Config Funktionen (erforderlich für atomic commits)
+static const struct drm_mode_config_funcs glanda_mode_config_funcs = {
+    .fb_create = drm_gem_fb_create, // Standard GEM Helper für Framebuffer-Erstellung
+    .atomic_check = drm_atomic_helper_check,
+    .atomic_commit = drm_atomic_helper_commit,
+};
 
 static const struct file_operations glanda_drm_fops = {
     .owner          = THIS_MODULE,
@@ -86,7 +147,7 @@ static const struct file_operations glanda_drm_fops = {
 };
 
 static const struct drm_driver glanda_drm_driver = {
-    .driver_features    = DRIVER_GEM,
+    .driver_features    = DRIVER_GEM | DRIVER_MODESET | DRIVER_ATOMIC,
     .name               = "glandagpu",
     .desc               = "GlandaGPU Hardware Accelerated DRM Driver",
     .major              = 1,
@@ -311,14 +372,38 @@ static int glandagpu_probe(struct platform_device *pdev)
         dev_warn(&pdev->dev, "No IRQ found, falling back to polling\n");
     }
 
-    ret = drm_dev_register(&gdev->drm, 0);
+    drm_mode_config_init(&gdev->drm);
+    gdev->drm.mode_config.min_width = 640;
+    gdev->drm.mode_config.min_height = 480;
+    gdev->drm.mode_config.max_width = 640;
+    gdev->drm.mode_config.max_height = 480;
+    gdev->drm.mode_config.funcs = &glanda_mode_config_funcs;
+
+    ret = drm_simple_encoder_init(&gdev->drm, &gdev->encoder, DRM_MODE_ENCODER_DAC);
     if (ret) {
-        dev_err(&pdev->dev, "Failed to register DRM device\n");
-        return ret;
+        dev_err(&pdev->dev, "Failed to initialize encoder\n");
+        goto err_mode_cleanup;
     }
+    gdev->encoder.possible_crtcs = 1; 
+
+    ret = drm_connector_init(&gdev->drm, &gdev->connector, &glanda_connector_funcs, DRM_MODE_CONNECTOR_VGA);
+    if (ret) {
+        dev_err(&pdev->dev, "Failed to initialize connector\n");
+        goto err_mode_cleanup;
+    }
+    drm_connector_helper_add(&gdev->connector, &glanda_connector_helper_funcs);
+
+    drm_connector_attach_encoder(&gdev->connector, &gdev->encoder);
+
+    ret = drm_dev_register(&gdev->drm, 0);
+    if (ret) goto err_mode_cleanup;
 
     dev_info(&pdev->dev, "GlandaGPU DRM Initialized (/dev/dri/cardX created)\n");
     return 0;
+
+err_mode_cleanup:
+    drm_mode_config_cleanup(&gdev->drm);
+    return ret;
 }
 
 static void glandagpu_remove(struct platform_device *pdev)
@@ -326,6 +411,8 @@ static void glandagpu_remove(struct platform_device *pdev)
     struct glanda_device *gdev = platform_get_drvdata(pdev);
 
     drm_dev_unregister(&gdev->drm);
+
+    drm_mode_config_cleanup(&gdev->drm);
 
     // Disable interrupts
     writel(0, gdev->mmio_base + REG_IER);
