@@ -24,6 +24,7 @@
 #include <drm/drm_ioctl.h>
 #include <drm/drm_gem_shmem_helper.h>
 #include <drm/drm_framebuffer.h>
+#include <drm/drm_vblank.h>
 
 #include <drm/drm_connector.h>
 #include <drm/drm_encoder.h>
@@ -191,6 +192,60 @@ static enum drm_connector_status glanda_connector_detect(struct drm_connector *c
     return connector_status_connected;
 }
 
+static int glanda_crtc_enable_vblank(struct drm_crtc *crtc)
+{
+    struct glanda_device *gdev = to_glanda(crtc->dev);
+    u32 ier;
+
+    ier = readl(gdev->mmio_base + REG_IER);
+    writel(ier | INT_VSYNC, gdev->mmio_base + REG_IER);
+
+    return 0;
+}
+
+static void glanda_crtc_disable_vblank(struct drm_crtc *crtc)
+{
+    struct glanda_device *gdev = to_glanda(crtc->dev);
+    u32 ier = readl(gdev->mmio_base + REG_IER);
+
+    writel(ier & ~INT_VSYNC, gdev->mmio_base + REG_IER);
+}
+
+static void glanda_crtc_atomic_enable(struct drm_crtc *crtc,
+                                      struct drm_atomic_state *state)
+{
+    drm_crtc_vblank_on(crtc);
+}
+
+static void glanda_crtc_atomic_disable(struct drm_crtc *crtc,
+                                       struct drm_atomic_state *state)
+{
+    drm_crtc_vblank_off(crtc);
+}
+
+static void glanda_crtc_atomic_flush(struct drm_crtc *crtc,
+                                     struct drm_atomic_state *state)
+{
+    struct drm_crtc_state *new_state = drm_atomic_get_new_crtc_state(state, crtc);
+    struct drm_pending_vblank_event *event;
+
+    if (new_state && new_state->event) {
+        event = new_state->event;
+        
+        new_state->event = NULL;
+
+        spin_lock_irq(&crtc->dev->event_lock);
+        
+        if (drm_crtc_vblank_get(crtc) == 0) {
+            drm_crtc_arm_vblank_event(crtc, event);
+        } else {
+            drm_crtc_send_vblank_event(crtc, event);
+        }
+        
+        spin_unlock_irq(&crtc->dev->event_lock);
+    }
+}
+
 static const struct drm_crtc_funcs glanda_crtc_funcs = {
     .destroy                = drm_crtc_cleanup,
     .set_config             = drm_atomic_helper_set_config,
@@ -198,9 +253,14 @@ static const struct drm_crtc_funcs glanda_crtc_funcs = {
     .reset                  = drm_atomic_helper_crtc_reset,
     .atomic_duplicate_state = drm_atomic_helper_crtc_duplicate_state,
     .atomic_destroy_state   = drm_atomic_helper_crtc_destroy_state,
+    .enable_vblank          = glanda_crtc_enable_vblank,
+    .disable_vblank         = glanda_crtc_disable_vblank,
 };
 
 static const struct drm_crtc_helper_funcs glanda_crtc_helper_funcs = {
+    .atomic_enable  = glanda_crtc_atomic_enable,
+    .atomic_disable = glanda_crtc_atomic_disable,
+    .atomic_flush   = glanda_crtc_atomic_flush,
 };
 
 static const struct drm_connector_helper_funcs glanda_connector_helper_funcs = {
@@ -237,6 +297,7 @@ static const struct drm_driver glanda_drm_driver = {
 static irqreturn_t glanda_irq_handler(int irq, void *dev_id)
 {
     struct glanda_device *gdev = dev_id;
+    
     if (!gdev || !gdev->mmio_base) {
         return IRQ_NONE;
     }
@@ -250,6 +311,11 @@ static irqreturn_t glanda_irq_handler(int irq, void *dev_id)
         gdev->cmd_done = true;
         wake_up_interruptible(&gdev->cmd_wq);
     } 
+
+    if (isr & INT_VSYNC) {
+        drm_crtc_handle_vblank(&gdev->crtc);
+    }
+
     // Clear interrupt(W1C)
     writel(isr, gdev->mmio_base + REG_ISR);
     return IRQ_HANDLED;
@@ -320,6 +386,13 @@ static int glandagpu_probe(struct platform_device *pdev)
         goto err_mode_cleanup;
     }
     drm_plane_helper_add(&gdev->primary_plane, &glanda_plane_helper_funcs);
+
+    // VBlank init
+    ret = drm_vblank_init(&gdev->drm, 1);
+    if (ret) {
+        dev_err(&pdev->dev, "Failed to initialize vblank\n");
+        goto err_mode_cleanup;
+    }
 
     // CRTC init
     ret = drm_crtc_init_with_planes(&gdev->drm, &gdev->crtc,
