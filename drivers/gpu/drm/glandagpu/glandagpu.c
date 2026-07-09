@@ -15,6 +15,7 @@
 #include <linux/mm.h>
 #include "glanda_uapi.h"
 #include <linux/mutex.h>
+#include <linux/iosys-map.h>
 
 #include <drm/drm_drv.h>
 #include <drm/drm_device.h>
@@ -22,6 +23,7 @@
 #include <drm/drm_gem.h>
 #include <drm/drm_ioctl.h>
 #include <drm/drm_gem_shmem_helper.h>
+#include <drm/drm_framebuffer.h>
 
 #include <drm/drm_connector.h>
 #include <drm/drm_encoder.h>
@@ -32,6 +34,10 @@
 #include <drm/drm_crtc.h>
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_modeset_helper_vtables.h>
+#include <drm/drm_plane.h>
+#include <drm/drm_fourcc.h>
+#include <drm/drm_atomic.h>
+#include <drm/drm_atomic_helper.h>
 
 // Hardware Constants
 #define GLANDA_WIDTH      640
@@ -78,12 +84,73 @@ struct glanda_device {
 
     struct mutex lock;
 
+    struct drm_plane primary_plane;
+
     struct drm_crtc crtc;
     struct drm_encoder encoder;
     struct drm_connector connector;
 };
 
 #define to_glanda(dev) container_of(dev, struct glanda_device, drm)
+
+static const uint32_t glanda_plane_formats[] = {
+    DRM_FORMAT_XRGB8888,
+};
+
+static void glanda_plane_atomic_update(struct drm_plane *plane,
+                                       struct drm_atomic_state *state)
+{
+    struct drm_plane_state *new_state = drm_atomic_get_new_plane_state(state, plane);
+    struct drm_framebuffer *fb = new_state->fb;
+    struct glanda_device *gdev = to_glanda(plane->dev);
+    struct drm_gem_shmem_object *shmem;
+    struct iosys_map map;
+    int ret;
+
+    if (!fb)
+        return;
+
+    shmem = to_drm_gem_shmem_obj(fb->obj[0]);
+    if (!shmem)
+        return;
+
+    ret = drm_gem_shmem_vmap(shmem, &map);
+    if (ret) {
+        dev_err(gdev->dev, "Fehler beim vmap des GEM Shmem Objekts\n");
+        return;
+    }
+
+    {
+        uint32_t *src = (uint32_t *)map.vaddr;
+        uint16_t __iomem *dst = (uint16_t __iomem *)gdev->vram_base;
+        int i;
+
+        for (i = 0; i < GLANDA_WIDTH * GLANDA_HEIGHT; i++) {
+            uint32_t pixel = src[i];
+
+            uint16_t packed = ((pixel >> 12) & 0x0F00) | // red
+                              ((pixel >> 8)  & 0x00F0) | // green
+                              ((pixel >> 4)  & 0x000F);  // blue
+
+            writew(packed, &dst[i]);
+        }
+    }
+
+    drm_gem_shmem_vunmap(shmem, &map);
+}
+
+static const struct drm_plane_helper_funcs glanda_plane_helper_funcs = {
+    .atomic_update = glanda_plane_atomic_update,
+};
+
+static const struct drm_plane_funcs glanda_plane_funcs = {
+    .update_plane           = drm_atomic_helper_update_plane,
+    .disable_plane          = drm_atomic_helper_disable_plane,
+    .destroy                = drm_plane_cleanup,
+    .reset                  = drm_atomic_helper_plane_reset,
+    .atomic_duplicate_state = drm_atomic_helper_plane_duplicate_state,
+    .atomic_destroy_state   = drm_atomic_helper_plane_destroy_state,
+};
 
 static int glanda_connector_get_modes(struct drm_connector *connector)
 {
@@ -116,19 +183,21 @@ static int glanda_connector_get_modes(struct drm_connector *connector)
     drm_mode_set_name(mode);
     drm_mode_probed_add(connector, mode);
 
-    pr_info("GlandaGPU-Debug: Modus 640x480 erfolgreich hinzugefügt.\n");
     return 1;
 }
 
 static enum drm_connector_status glanda_connector_detect(struct drm_connector *connector, bool force)
 {
-    pr_info("GlandaGPU-Debug: glanda_connector_detect() aufgerufen! force=%d\n", force);
     return connector_status_connected;
 }
 
 static const struct drm_crtc_funcs glanda_crtc_funcs = {
-    .destroy = drm_crtc_cleanup,
-    .set_config = drm_crtc_helper_set_config, 
+    .destroy                = drm_crtc_cleanup,
+    .set_config             = drm_atomic_helper_set_config,
+    .page_flip              = drm_atomic_helper_page_flip,
+    .reset                  = drm_atomic_helper_crtc_reset,
+    .atomic_duplicate_state = drm_atomic_helper_crtc_duplicate_state,
+    .atomic_destroy_state   = drm_atomic_helper_crtc_destroy_state,
 };
 
 static const struct drm_crtc_helper_funcs glanda_crtc_helper_funcs = {
@@ -139,29 +208,24 @@ static const struct drm_connector_helper_funcs glanda_connector_helper_funcs = {
 };
 
 static const struct drm_connector_funcs glanda_connector_funcs = {
-    .fill_modes = drm_helper_probe_single_connector_modes,
-    .destroy = drm_connector_cleanup,
-    .detect = glanda_connector_detect,
+    .fill_modes             = drm_helper_probe_single_connector_modes,
+    .destroy                = drm_connector_cleanup,
+    .detect                 = glanda_connector_detect,
+    .reset                  = drm_atomic_helper_connector_reset,
+    .atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,
+    .atomic_destroy_state   = drm_atomic_helper_connector_destroy_state,
 };
 
 static const struct drm_mode_config_funcs glanda_mode_config_funcs = {
-    .fb_create = drm_gem_fb_create, 
+    .fb_create      = drm_gem_fb_create, 
+    .atomic_check   = drm_atomic_helper_check,
+    .atomic_commit  = drm_atomic_helper_commit,
 };
 
-static const struct file_operations glanda_drm_fops = {
-    .owner          = THIS_MODULE,
-    .open           = drm_open,
-    .release        = drm_release,
-    .unlocked_ioctl = drm_ioctl,
-    .compat_ioctl   = drm_compat_ioctl,
-    .poll           = drm_poll,
-    .read           = drm_read,
-    .llseek         = noop_llseek,
-    .mmap           = drm_gem_mmap,
-};
+DEFINE_DRM_GEM_FOPS(glanda_drm_fops);
 
 static const struct drm_driver glanda_drm_driver = {
-    .driver_features    = DRIVER_GEM | DRIVER_MODESET,
+    .driver_features    = DRIVER_GEM | DRIVER_MODESET | DRIVER_ATOMIC,
     .name               = "glandagpu",
     .desc               = "GlandaGPU Hardware Accelerated DRM Driver",
     .major              = 1,
@@ -186,7 +250,7 @@ static irqreturn_t glanda_irq_handler(int irq, void *dev_id)
         gdev->cmd_done = true;
         wake_up_interruptible(&gdev->cmd_wq);
     } 
-
+    // Clear interrupt(W1C)
     writel(isr, gdev->mmio_base + REG_ISR);
     return IRQ_HANDLED;
 }
@@ -208,10 +272,10 @@ static int glandagpu_probe(struct platform_device *pdev)
     platform_set_drvdata(pdev, gdev);
 
     mutex_init(&gdev->lock);
-
+    // Interrupt setup
     init_waitqueue_head(&gdev->cmd_wq);
     gdev->irq = -1;
-
+    // Map VRAM
     res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
     if (!res) return -ENODEV;
     gdev->vram_phys = res->start;
@@ -221,7 +285,7 @@ static int glandagpu_probe(struct platform_device *pdev)
     if (!gdev->vram_base || !gdev->mmio_base) return -ENOMEM;
 
     writel(0, gdev->mmio_base + REG_IER);
-    writel(0xFFFFFFFF, gdev->mmio_base + REG_ISR); 
+    writel(0xFFFFFFFF, gdev->mmio_base + REG_ISR); //clear flags
 
     ret = platform_get_irq(pdev, 0);
     if (ret > 0) {
@@ -239,7 +303,7 @@ static int glandagpu_probe(struct platform_device *pdev)
         dev_warn(&pdev->dev, "No IRQ found, falling back to polling\n");
     }
 
-    // DRM Modus Konfiguration
+    // DRM mode config
     drm_mode_config_init(&gdev->drm);
     gdev->drm.mode_config.min_width = 640;
     gdev->drm.mode_config.min_height = 480;
@@ -247,15 +311,27 @@ static int glandagpu_probe(struct platform_device *pdev)
     gdev->drm.mode_config.max_height = 480;
     gdev->drm.mode_config.funcs = &glanda_mode_config_funcs;
 
-    // CRTC initialisieren
-    ret = drm_crtc_init(&gdev->drm, &gdev->crtc, &glanda_crtc_funcs);
+    ret = drm_universal_plane_init(&gdev->drm, &gdev->primary_plane, 1 << 0,
+                                   &glanda_plane_funcs,
+                                   glanda_plane_formats, ARRAY_SIZE(glanda_plane_formats),
+                                   NULL, DRM_PLANE_TYPE_PRIMARY, NULL);
     if (ret) {
-        dev_err(&pdev->dev, "Failed to initialize CRTC\n");
+        dev_err(&pdev->dev, "Failed to initialize primary plane\n");
+        goto err_mode_cleanup;
+    }
+    drm_plane_helper_add(&gdev->primary_plane, &glanda_plane_helper_funcs);
+
+    // CRTC init
+    ret = drm_crtc_init_with_planes(&gdev->drm, &gdev->crtc,
+                                    &gdev->primary_plane, NULL,
+                                    &glanda_crtc_funcs, NULL);
+    if (ret) {
+        dev_err(&pdev->dev, "Failed to initialize CRTC with planes\n");
         goto err_mode_cleanup;
     }
     drm_crtc_helper_add(&gdev->crtc, &glanda_crtc_helper_funcs);
 
-    // Encoder initialisieren
+    // Encoder init
     ret = drm_simple_encoder_init(&gdev->drm, &gdev->encoder, DRM_MODE_ENCODER_DAC);
     if (ret) {
         dev_err(&pdev->dev, "Failed to initialize encoder\n");
@@ -263,7 +339,7 @@ static int glandagpu_probe(struct platform_device *pdev)
     }
     gdev->encoder.possible_crtcs = 1; 
 
-    // Connector initialisieren
+    // Connector init
     ret = drm_connector_init(&gdev->drm, &gdev->connector, &glanda_connector_funcs, DRM_MODE_CONNECTOR_VGA);
     if (ret) {
         dev_err(&pdev->dev, "Failed to initialize connector\n");
@@ -273,7 +349,12 @@ static int glandagpu_probe(struct platform_device *pdev)
 
     drm_connector_attach_encoder(&gdev->connector, &gdev->encoder);
 
+    //important for sysfs
+    mutex_lock(&gdev->drm.mode_config.mutex);
     drm_helper_probe_single_connector_modes(&gdev->connector, 1024, 768);
+    mutex_unlock(&gdev->drm.mode_config.mutex);
+
+    drm_mode_config_reset(&gdev->drm);
 
     ret = drm_dev_register(&gdev->drm, 0);
     if (ret) goto err_mode_cleanup;
@@ -292,11 +373,11 @@ static void glandagpu_remove(struct platform_device *pdev)
 
     drm_dev_unregister(&gdev->drm);
     drm_mode_config_cleanup(&gdev->drm);
-
+    // Disable interrupts
     writel(0, gdev->mmio_base + REG_IER);
     dev_info(&pdev->dev, "GlandaGPU DRM Driver removed\n");
 }
-
+// Device Tree Match
 static const struct of_device_id glanda_of_match[] = {
     { .compatible = "glanda,gpu-1.0", },
     { /* sentinel */ }
@@ -311,17 +392,17 @@ static struct platform_driver glandagpu_driver = {
     .probe = glandagpu_probe,
     .remove = glandagpu_remove,
 };
-
+// Device Registration only for x86 TODO use device tree for ARM
 #ifdef CONFIG_X86
 static struct platform_device *pdev_x86;
 
 static struct resource glandagpu_resources[] = {
-    [0] = { 
+    [0] = { // Single Resource covering VRAM and MMIO
         .start = BRIDGE_BASE,
-        .end   = GLANDA_BASE_SIZE, 
+        .end   = GLANDA_BASE_SIZE, // Size from DTS
         .flags = IORESOURCE_MEM,
     },
-    [1] = { 
+    [1] = { // IRQ
         .start = 11,
         .end   = 11,
         .flags = IORESOURCE_IRQ,
@@ -338,7 +419,7 @@ static int __init glandagpu_init(void)
         pr_err("GlandaGPU: Failed to register platform driver\n");
         return ret;
     }
-
+// Device Registration only for x86 TODO use device tree for ARM
 #ifdef CONFIG_X86
     pdev_x86 = platform_device_register_simple("glandagpu", -1, 
                                            glandagpu_resources, 
@@ -356,7 +437,7 @@ static int __init glandagpu_init(void)
 
 static void __exit glandagpu_exit(void)
 {
-#ifdef CONFIG_X86 
+#ifdef CONFIG_X86 // Device Registration only for x86 TODO use device tree for ARM
     if (pdev_x86)
         platform_device_unregister(pdev_x86);
 #endif
