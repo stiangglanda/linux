@@ -13,7 +13,6 @@
 #include <linux/interrupt.h>
 #include <linux/wait.h>
 #include <linux/mm.h>
-#include "glanda_uapi.h"
 #include <linux/mutex.h>
 #include <linux/iosys-map.h>
 
@@ -39,6 +38,8 @@
 #include <drm/drm_fourcc.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
+
+#include "../../../../include/uapi/drm/glanda_drm.h"
 
 // Hardware Constants
 #define GLANDA_WIDTH      640
@@ -97,6 +98,169 @@ struct glanda_device {
 static const uint32_t glanda_plane_formats[] = {
     DRM_FORMAT_XRGB8888,
 };
+
+static int glanda_wait_idle(struct glanda_device *gdev)
+{
+    int ret;
+    unsigned int status;
+
+    status = readl(gdev->mmio_base + REG_STATUS);
+    if (!(status & STATUS_BUSY)) {
+        return 0;
+    }
+
+    if (gdev->irq < 0) {
+        int timeout = 10000;
+        do {
+            status = readl(gdev->mmio_base + REG_STATUS);
+            if (!(status & STATUS_BUSY))
+                return 0;
+            udelay(1);
+        } while (--timeout > 0);
+
+        dev_err(gdev->dev, "GlandaGPU: Polled wait_idle timeout\n");
+        return -ETIMEDOUT;
+    }
+
+    gdev->cmd_done = false;
+
+    ret = wait_event_interruptible_timeout(
+        gdev->cmd_wq,
+        gdev->cmd_done || !(readl(gdev->mmio_base + REG_STATUS) & STATUS_BUSY),
+        msecs_to_jiffies(500));
+
+    if (ret == 0) {
+        dev_err(gdev->dev, "GlandaGPU: IRQ wait_idle timeout\n");
+        return -ETIMEDOUT;
+    } else if (ret < 0) {
+        return ret;
+    }
+
+    return 0;
+}
+
+static int glanda_hw_clear(struct glanda_device *gdev, int color)
+{
+    u32 ctrl;
+    int ret;
+
+    if (mutex_lock_interruptible(&gdev->lock)) {
+        return -ERESTARTSYS;
+    }
+
+    ret = glanda_wait_idle(gdev);
+    if (ret) {
+        mutex_unlock(&gdev->lock);
+        return ret;
+    }
+
+    writel(color, gdev->mmio_base + REG_COLOR);
+    ctrl = CTRL_START | CMD_CLEAR;
+    writel(ctrl, gdev->mmio_base + REG_CTRL);
+
+    mutex_unlock(&gdev->lock);
+    return 0;
+}
+
+static int glanda_hw_draw_rect(struct glanda_device *gdev, 
+                                int x, int y, int w, int h, int color)
+{
+    u32 coord0, coord1, ctrl;
+    int ret;
+
+    if (mutex_lock_interruptible(&gdev->lock)) {
+        return -ERESTARTSYS;
+    }
+
+    ret = glanda_wait_idle(gdev);
+    if (ret) {
+        mutex_unlock(&gdev->lock);
+        return ret;
+    }
+
+    coord0 = (y << 16) | (x & 0x3FF);
+    coord1 = (h << 16) | (w & 0x3FF);
+
+    writel(coord0, gdev->mmio_base + REG_COORD0);
+    writel(coord1, gdev->mmio_base + REG_COORD1);
+    writel(color,  gdev->mmio_base + REG_COLOR);
+
+    ctrl = CTRL_START | CMD_RECT;
+    writel(ctrl, gdev->mmio_base + REG_CTRL);
+
+    mutex_unlock(&gdev->lock);
+    return 0;
+}
+
+static int glanda_hw_draw_line(struct glanda_device *gdev, 
+                                int x1, int y1, int x2, int y2, int color)
+{
+    u32 coord0, coord1, ctrl;
+    int ret;
+
+    if (mutex_lock_interruptible(&gdev->lock)) {
+        return -ERESTARTSYS;
+    }
+
+    ret = glanda_wait_idle(gdev);
+    if (ret) {
+        mutex_unlock(&gdev->lock);
+        return ret;
+    }
+
+    coord0 = (y1 << 16) | (x1 & 0x3FF);
+    coord1 = (y2 << 16) | (x2 & 0x3FF);
+
+    writel(coord0, gdev->mmio_base + REG_COORD0);
+    writel(coord1, gdev->mmio_base + REG_COORD1);
+    writel(color,  gdev->mmio_base + REG_COLOR);
+
+    ctrl = CTRL_START | CMD_LINE;
+    writel(ctrl, gdev->mmio_base + REG_CTRL);
+
+    mutex_unlock(&gdev->lock);
+    return 0;
+}
+
+static int glanda_drm_ioctl_clear(struct drm_device *dev, void *data,
+                                  struct drm_file *file_priv)
+{
+    struct glanda_device *gdev = to_glanda(dev);
+    struct glanda_clear_cmd *cmd = data;
+
+    return glanda_hw_clear(gdev, cmd->color);
+}
+
+static int glanda_drm_ioctl_draw_rect(struct drm_device *dev, void *data,
+                                      struct drm_file *file_priv)
+{
+    struct glanda_device *gdev = to_glanda(dev);
+    struct glanda_draw_rect_cmd *cmd = data;
+
+    if (cmd->x >= GLANDA_WIDTH || cmd->y >= GLANDA_HEIGHT ||
+        cmd->w > GLANDA_WIDTH || cmd->h > GLANDA_HEIGHT ||
+        cmd->x + cmd->w > GLANDA_WIDTH ||
+        cmd->y + cmd->h > GLANDA_HEIGHT) {
+        return -EINVAL;
+    }
+
+    return glanda_hw_draw_rect(gdev, cmd->x, cmd->y, cmd->w, cmd->h, cmd->color);
+}
+
+static int glanda_drm_ioctl_draw_line(struct drm_device *dev, void *data,
+                                      struct drm_file *file_priv)
+{
+    struct glanda_device *gdev = to_glanda(dev);
+    struct glanda_draw_line_cmd *cmd = data;
+
+    if (cmd->x0 >= GLANDA_WIDTH || cmd->y0 >= GLANDA_HEIGHT ||
+        cmd->x1 >= GLANDA_WIDTH || cmd->y1 >= GLANDA_HEIGHT) {
+        return -EINVAL;
+    }
+
+    return glanda_hw_draw_line(gdev, cmd->x0, cmd->y0, cmd->x1, cmd->y1, cmd->color);
+}
+
 
 static void glanda_plane_atomic_update(struct drm_plane *plane,
                                        struct drm_atomic_state *state)
@@ -282,6 +446,12 @@ static const struct drm_mode_config_funcs glanda_mode_config_funcs = {
     .atomic_commit  = drm_atomic_helper_commit,
 };
 
+static const struct drm_ioctl_desc glanda_ioctls[] = {
+    DRM_IOCTL_DEF_DRV(GLANDA_CLEAR, glanda_drm_ioctl_clear, DRM_AUTH | DRM_RENDER_ALLOW),
+    DRM_IOCTL_DEF_DRV(GLANDA_DRAW_RECT, glanda_drm_ioctl_draw_rect, DRM_AUTH | DRM_RENDER_ALLOW),
+    DRM_IOCTL_DEF_DRV(GLANDA_DRAW_LINE, glanda_drm_ioctl_draw_line, DRM_AUTH | DRM_RENDER_ALLOW),
+};
+
 DEFINE_DRM_GEM_FOPS(glanda_drm_fops);
 
 static const struct drm_driver glanda_drm_driver = {
@@ -292,6 +462,8 @@ static const struct drm_driver glanda_drm_driver = {
     .minor              = 0,
     .fops               = &glanda_drm_fops,
     .dumb_create        = drm_gem_shmem_dumb_create,
+    .ioctls             = glanda_ioctls,
+    .num_ioctls         = ARRAY_SIZE(glanda_ioctls),
 };
 
 static irqreturn_t glanda_irq_handler(int irq, void *dev_id)
