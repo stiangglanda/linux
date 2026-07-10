@@ -38,6 +38,7 @@
 #include <drm/drm_fourcc.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_damage_helper.h>
 
 #include "../../../../include/uapi/drm/glanda_drm.h"
 
@@ -287,17 +288,17 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 
     {
         uint32_t *src = (uint32_t *)map.vaddr;
-        uint16_t __iomem *dst = (uint16_t __iomem *)gdev->vram_base;
+        uint32_t __iomem *dst = (uint32_t __iomem *)gdev->vram_base;
         int i;
 
         for (i = 0; i < GLANDA_WIDTH * GLANDA_HEIGHT; i++) {
             uint32_t pixel = src[i];
 
-            uint16_t packed = ((pixel >> 12) & 0x0F00) | // red
+            uint32_t packed = ((pixel >> 12) & 0x0F00) | // red
                               ((pixel >> 8)  & 0x00F0) | // green
                               ((pixel >> 4)  & 0x000F);  // blue
 
-            writew(packed, &dst[i]);
+            writel(packed, &dst[i]);
         }
     }
 
@@ -440,8 +441,21 @@ static const struct drm_connector_funcs glanda_connector_funcs = {
     .atomic_destroy_state   = drm_atomic_helper_connector_destroy_state,
 };
 
+static const struct drm_framebuffer_funcs glanda_fb_funcs = {
+    .destroy        = drm_gem_fb_destroy,
+    .create_handle  = drm_gem_fb_create_handle,
+    .dirty          = drm_atomic_helper_dirtyfb,
+};
+
+static struct drm_framebuffer *glanda_fb_create(struct drm_device *dev,
+                                                struct drm_file *file,
+                                                const struct drm_mode_fb_cmd2 *mode_cmd)
+{
+    return drm_gem_fb_create_with_funcs(dev, file, mode_cmd, &glanda_fb_funcs);
+}
+
 static const struct drm_mode_config_funcs glanda_mode_config_funcs = {
-    .fb_create      = drm_gem_fb_create, 
+    .fb_create      = glanda_fb_create,
     .atomic_check   = drm_atomic_helper_check,
     .atomic_commit  = drm_atomic_helper_commit,
 };
