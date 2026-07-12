@@ -49,7 +49,7 @@
 #define GLANDA_MMIO_SIZE  32
 #define GLANDA_MMIO_OFFSET 0x00200000
 
-// Base addresses (x86 testing)
+/* Base addresses used by the x86 test device. */
 #define BRIDGE_BASE       0xC0000000
 #define GLANDA_VRAM_BASE  (BRIDGE_BASE + 0x00000000)
 #define GLANDA_MMIO_BASE  (BRIDGE_BASE + GLANDA_MMIO_OFFSET)
@@ -600,7 +600,6 @@ static int glandagpu_probe(struct platform_device *pdev)
     }
     drm_crtc_helper_add(&gdev->crtc, &glanda_crtc_helper_funcs);
 
-    // Encoder init
     ret = drm_simple_encoder_init(&gdev->drm, &gdev->encoder, DRM_MODE_ENCODER_DAC);
     if (ret) {
         dev_err(&pdev->dev, "Failed to initialize encoder\n");
@@ -608,7 +607,6 @@ static int glandagpu_probe(struct platform_device *pdev)
     }
     gdev->encoder.possible_crtcs = 1; 
 
-    // Connector init
     ret = drm_connector_init(&gdev->drm, &gdev->connector, &glanda_connector_funcs, DRM_MODE_CONNECTOR_VGA);
     if (ret) {
         dev_err(&pdev->dev, "Failed to initialize connector\n");
@@ -642,7 +640,6 @@ static void glandagpu_remove(struct platform_device *pdev)
 
     drm_dev_unregister(&gdev->drm);
     drm_mode_config_cleanup(&gdev->drm);
-    // Disable interrupts
     writel(0, gdev->mmio_base + REG_IER);
     dev_info(&pdev->dev, "GlandaGPU DRM Driver removed\n");
 }
@@ -661,7 +658,6 @@ static struct platform_driver glandagpu_driver = {
     .probe = glandagpu_probe,
     .remove = glandagpu_remove,
 };
-/* Temporary x86-only test device registration. */
 #ifdef CONFIG_X86
 static struct platform_device *pdev_x86;
 
@@ -688,8 +684,8 @@ static int __init glandagpu_init(void)
         pr_err("GlandaGPU: Failed to register platform driver\n");
         return ret;
     }
-/* Temporary x86-only test device registration. */
 #ifdef CONFIG_X86
+    /* Temporary x86-only test device registration. */
     pdev_x86 = platform_device_register_simple("glandagpu", -1, 
                                            glandagpu_resources, 
                                            ARRAY_SIZE(glandagpu_resources));
