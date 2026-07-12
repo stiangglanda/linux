@@ -673,6 +673,19 @@ static struct resource glandagpu_resources[] = {
         .flags = IORESOURCE_IRQ,
     },
 };
+
+static int glandagpu_register_x86_test_device(void)
+{
+    pdev_x86 = platform_device_register_simple("glandagpu", -1,
+                                               glandagpu_resources,
+                                               ARRAY_SIZE(glandagpu_resources));
+    if (IS_ERR(pdev_x86)) {
+        pr_err("GlandaGPU: Failed to register platform device\n");
+        return PTR_ERR(pdev_x86);
+    }
+
+    return 0;
+}
 #endif
 
 static int __init glandagpu_init(void)
@@ -685,14 +698,10 @@ static int __init glandagpu_init(void)
         return ret;
     }
 #ifdef CONFIG_X86
-    /* Temporary x86-only test device registration. */
-    pdev_x86 = platform_device_register_simple("glandagpu", -1, 
-                                           glandagpu_resources, 
-                                           ARRAY_SIZE(glandagpu_resources));
-    if (IS_ERR(pdev_x86)) {
-        pr_err("GlandaGPU: Failed to register platform device\n");
+    ret = glandagpu_register_x86_test_device();
+    if (ret) {
         platform_driver_unregister(&glandagpu_driver);
-        return PTR_ERR(pdev_x86);
+        return ret;
     }
 #endif
 
