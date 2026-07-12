@@ -119,7 +119,7 @@ static int glanda_wait_idle(struct glanda_device *gdev)
             udelay(1);
         } while (--timeout > 0);
 
-        dev_err(gdev->dev, "GlandaGPU: Polled wait_idle timeout\n");
+        dev_err(gdev->dev, "GlandaGPU: polling wait_idle timeout\n");
         return -ETIMEDOUT;
     }
 
@@ -282,7 +282,7 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 
     ret = drm_gem_shmem_vmap(shmem, &map);
     if (ret) {
-        dev_err(gdev->dev, "Fehler beim vmap des GEM Shmem Objekts\n");
+        dev_err(gdev->dev, "GlandaGPU: failed to vmap GEM shmem object\n");
         return;
     }
 
@@ -322,15 +322,13 @@ static int glanda_connector_get_modes(struct drm_connector *connector)
 {
     struct drm_display_mode *mode;
 
-    pr_info("GlandaGPU-Debug: glanda_connector_get_modes() wurde aufgerufen!\n");
-
     mode = drm_mode_create(connector->dev);
     if (!mode) {
-        pr_info("GlandaGPU-Debug: Fehler beim Erstellen des Modus-Objekts!\n");
+        dev_err(connector->dev, "GlandaGPU: failed to create display mode\n");
         return 0;
     }
 
-    // VGA-Standard 640x480 @ 60 Hz
+    /* Standard VGA timing: 640x480 @ 60 Hz. */
     mode->hdisplay = 640;
     mode->hsync_start = 656;
     mode->hsync_end = 752;
@@ -341,7 +339,7 @@ static int glanda_connector_get_modes(struct drm_connector *connector)
     mode->vsync_end = 492;
     mode->vtotal = 525;
 
-    mode->clock = 25175; // 25.175 MHz Pixelclock
+    mode->clock = 25175; /* 25.175 MHz pixel clock */
 
     mode->flags = DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC;
     mode->type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
@@ -608,7 +606,7 @@ static int glandagpu_probe(struct platform_device *pdev)
 
     drm_connector_attach_encoder(&gdev->connector, &gdev->encoder);
 
-    //important for sysfs
+    /* Populate connector state early so userspace can enumerate modes. */
     mutex_lock(&gdev->drm.mode_config.mutex);
     drm_helper_probe_single_connector_modes(&gdev->connector, 1024, 768);
     mutex_unlock(&gdev->drm.mode_config.mutex);
@@ -636,10 +634,10 @@ static void glandagpu_remove(struct platform_device *pdev)
     writel(0, gdev->mmio_base + REG_IER);
     dev_info(&pdev->dev, "GlandaGPU DRM Driver removed\n");
 }
-// Device Tree Match
+/* Device Tree match table. */
 static const struct of_device_id glanda_of_match[] = {
     { .compatible = "glanda,gpu-1.0", },
-    { /* sentinel */ }
+    { /* end of table */ }
 };
 MODULE_DEVICE_TABLE(of, glanda_of_match);
 
@@ -651,17 +649,17 @@ static struct platform_driver glandagpu_driver = {
     .probe = glandagpu_probe,
     .remove = glandagpu_remove,
 };
-// Device Registration only for x86 TODO use device tree for ARM
+/* Temporary x86-only test device registration. */
 #ifdef CONFIG_X86
 static struct platform_device *pdev_x86;
 
 static struct resource glandagpu_resources[] = {
-    [0] = { // Single Resource covering VRAM and MMIO
+    [0] = { /* Single resource covering VRAM and MMIO. */
         .start = BRIDGE_BASE,
-        .end   = GLANDA_BASE_SIZE, // Size from DTS
+        .end   = GLANDA_BASE_SIZE,
         .flags = IORESOURCE_MEM,
     },
-    [1] = { // IRQ
+    [1] = { /* IRQ */
         .start = 11,
         .end   = 11,
         .flags = IORESOURCE_IRQ,
@@ -678,7 +676,7 @@ static int __init glandagpu_init(void)
         pr_err("GlandaGPU: Failed to register platform driver\n");
         return ret;
     }
-// Device Registration only for x86 TODO use device tree for ARM
+/* Temporary x86-only test device registration. */
 #ifdef CONFIG_X86
     pdev_x86 = platform_device_register_simple("glandagpu", -1, 
                                            glandagpu_resources, 
@@ -696,7 +694,7 @@ static int __init glandagpu_init(void)
 
 static void __exit glandagpu_exit(void)
 {
-#ifdef CONFIG_X86 // Device Registration only for x86 TODO use device tree for ARM
+#ifdef CONFIG_X86
     if (pdev_x86)
         platform_device_unregister(pdev_x86);
 #endif
