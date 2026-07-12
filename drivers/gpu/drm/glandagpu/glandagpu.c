@@ -335,8 +335,28 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
     drm_gem_shmem_vunmap(shmem, &map);
 }
 
+static int glanda_plane_atomic_check(struct drm_plane *plane,
+                                     struct drm_atomic_state *state)
+{
+    struct drm_plane_state *new_plane_state =
+        drm_atomic_get_new_plane_state(state, plane);
+    struct drm_crtc_state *crtc_state;
+
+    if (!new_plane_state->crtc)
+        return 0;
+
+    crtc_state = drm_atomic_get_new_crtc_state(state, new_plane_state->crtc);
+
+    return drm_atomic_helper_check_plane_state(new_plane_state, crtc_state,
+                                               DRM_PLANE_NO_SCALING,
+                                               DRM_PLANE_NO_SCALING,
+                                               false, /* can_position */
+                                               false  /* can_update_disabled */);
+}
+
 static const struct drm_plane_helper_funcs glanda_plane_helper_funcs = {
     .atomic_update = glanda_plane_atomic_update,
+    .atomic_check  = glanda_plane_atomic_check,
 };
 
 static const struct drm_plane_funcs glanda_plane_funcs = {
@@ -488,6 +508,14 @@ static const struct drm_mode_config_funcs glanda_mode_config_funcs = {
     .atomic_commit  = drm_atomic_helper_commit,
 };
 
+/*
+ * RFC NOTE: These three fixed-function ioctls (clear/rect/line) are a
+ * minimal placeholder UAPI to demonstrate the hardware's 2D drawing
+ * capability end-to-end. Given plans to add polygon/3D rendering support
+ * in the future, feedback is explicitly requested on whether a generic
+ * command-buffer submission ioctl (similar to virtio_gpu/etnaviv) would
+ * be a better long-term UAPI direction before this is treated as stable.
+ */
 static const struct drm_ioctl_desc glanda_ioctls[] = {
     DRM_IOCTL_DEF_DRV(GLANDA_CLEAR, glanda_drm_ioctl_clear, DRM_AUTH | DRM_RENDER_ALLOW),
     DRM_IOCTL_DEF_DRV(GLANDA_DRAW_RECT, glanda_drm_ioctl_draw_rect, DRM_AUTH | DRM_RENDER_ALLOW),
@@ -497,7 +525,7 @@ static const struct drm_ioctl_desc glanda_ioctls[] = {
 DEFINE_DRM_GEM_FOPS(glanda_drm_fops);
 
 static const struct drm_driver glanda_drm_driver = {
-    .driver_features    = DRIVER_GEM | DRIVER_MODESET | DRIVER_ATOMIC,
+    .driver_features    = DRIVER_GEM | DRIVER_MODESET | DRIVER_ATOMIC | DRIVER_RENDER,
     .name               = "glandagpu",
     .desc               = "GlandaGPU Hardware Accelerated DRM Driver",
     .major              = 1,
@@ -656,11 +684,17 @@ static void glandagpu_remove(struct platform_device *pdev)
 {
     struct glanda_device *gdev = platform_get_drvdata(pdev);
 
+    /* Disable interrupts first so no new IRQ work can race the teardown
+     * below, and wake up anyone still blocked in glanda_wait_idle(). */
+    writel(0, gdev->mmio_base + REG_IER);
+    gdev->cmd_done = true;
+    wake_up_interruptible(&gdev->cmd_wq);
+
     drm_dev_unregister(&gdev->drm);
     drm_mode_config_cleanup(&gdev->drm);
-    writel(0, gdev->mmio_base + REG_IER);
     dev_info(&pdev->dev, "GlandaGPU DRM Driver removed\n");
 }
+
 /* Device Tree match table. */
 static const struct of_device_id glanda_of_match[] = {
     { .compatible = "glanda,gpu-1.0", },
@@ -676,7 +710,7 @@ static struct platform_driver glandagpu_driver = {
     .probe = glandagpu_probe,
     .remove = glandagpu_remove,
 };
-#ifdef CONFIG_X86
+#ifdef CONFIG_DRM_GLANDA_X86_TEST
 static struct platform_device *pdev_x86;
 
 static struct resource glandagpu_resources[] = {
@@ -715,7 +749,7 @@ static int __init glandagpu_init(void)
         pr_err("GlandaGPU: Failed to register platform driver\n");
         return ret;
     }
-#ifdef CONFIG_X86
+#ifdef CONFIG_DRM_GLANDA_X86_TEST
     ret = glandagpu_register_x86_test_device();
     if (ret) {
         platform_driver_unregister(&glandagpu_driver);
@@ -729,7 +763,7 @@ static int __init glandagpu_init(void)
 
 static void __exit glandagpu_exit(void)
 {
-#ifdef CONFIG_X86
+#ifdef CONFIG_DRM_GLANDA_X86_TEST
     if (pdev_x86)
         platform_device_unregister(pdev_x86);
 #endif
