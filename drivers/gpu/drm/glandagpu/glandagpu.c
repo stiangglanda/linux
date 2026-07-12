@@ -40,7 +40,7 @@
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_damage_helper.h>
 
-#include "../../../../include/uapi/drm/glanda_drm.h"
+#include <uapi/drm/glanda_drm.h>
 
 // Hardware Constants
 #define GLANDA_WIDTH      640
@@ -298,7 +298,7 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
                               ((pixel >> 8)  & 0x00F0) | // green
                               ((pixel >> 4)  & 0x000F);  // blue
 
-            writel(packed, &dst[i]);
+            writel_relaxed(packed, &dst[i]);
         }
     }
 
