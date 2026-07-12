@@ -271,6 +271,9 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
     struct glanda_device *gdev = to_glanda(plane->dev);
     struct drm_gem_shmem_object *shmem;
     struct iosys_map map;
+    u32 src_pitch;
+    u32 width;
+    u32 height;
     int ret;
 
     if (!fb)
@@ -286,19 +289,28 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
         return;
     }
 
+    src_pitch = fb->pitches[0];
+    width = min_t(u32, fb->width, GLANDA_WIDTH);
+    height = min_t(u32, fb->height, GLANDA_HEIGHT);
+
     {
-        uint32_t *src = (uint32_t *)map.vaddr;
-        uint32_t __iomem *dst = (uint32_t __iomem *)gdev->vram_base;
-        int i;
+        u8 __iomem *dst_base = gdev->vram_base;
+        u8 *src_base = map.vaddr;
+        u32 y;
 
-        for (i = 0; i < GLANDA_WIDTH * GLANDA_HEIGHT; i++) {
-            uint32_t pixel = src[i];
+        for (y = 0; y < height; y++) {
+            u32 *src = (u32 *)(src_base + y * src_pitch);
+            u32 __iomem *dst = (u32 __iomem *)(dst_base + y * GLANDA_WIDTH * sizeof(u32));
+            u32 x;
 
-            uint32_t packed = ((pixel >> 12) & 0x0F00) | // red
-                              ((pixel >> 8)  & 0x00F0) | // green
-                              ((pixel >> 4)  & 0x000F);  // blue
+            for (x = 0; x < width; x++) {
+                u32 pixel = src[x];
+                u32 packed = ((pixel >> 12) & 0x0F00) |
+                             ((pixel >> 8)  & 0x00F0) |
+                             ((pixel >> 4)  & 0x000F);
 
-            writel_relaxed(packed, &dst[i]);
+                writel_relaxed(packed, &dst[x]);
+            }
         }
     }
 
@@ -324,7 +336,7 @@ static int glanda_connector_get_modes(struct drm_connector *connector)
 
     mode = drm_mode_create(connector->dev);
     if (!mode) {
-        dev_err(connector->dev, "GlandaGPU: failed to create display mode\n");
+        dev_err(connector->dev->dev, "GlandaGPU: failed to create display mode\n");
         return 0;
     }
 
