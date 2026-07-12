@@ -232,20 +232,40 @@ static int glanda_drm_ioctl_clear(struct drm_device *dev, void *data,
     return glanda_hw_clear(gdev, cmd->color);
 }
 
+static bool glanda_rect_cmd_is_valid(const struct glanda_draw_rect_cmd *cmd)
+{
+    if (cmd->x >= GLANDA_WIDTH || cmd->y >= GLANDA_HEIGHT)
+        return false;
+    if (cmd->w > GLANDA_WIDTH || cmd->h > GLANDA_HEIGHT)
+        return false;
+    if (cmd->x + cmd->w > GLANDA_WIDTH)
+        return false;
+    if (cmd->y + cmd->h > GLANDA_HEIGHT)
+        return false;
+
+    return true;
+}
+
 static int glanda_drm_ioctl_draw_rect(struct drm_device *dev, void *data,
                                       struct drm_file *file_priv)
 {
     struct glanda_device *gdev = to_glanda(dev);
     struct glanda_draw_rect_cmd *cmd = data;
 
-    if (cmd->x >= GLANDA_WIDTH || cmd->y >= GLANDA_HEIGHT ||
-        cmd->w > GLANDA_WIDTH || cmd->h > GLANDA_HEIGHT ||
-        cmd->x + cmd->w > GLANDA_WIDTH ||
-        cmd->y + cmd->h > GLANDA_HEIGHT) {
+    if (!glanda_rect_cmd_is_valid(cmd))
         return -EINVAL;
-    }
 
     return glanda_hw_draw_rect(gdev, cmd->x, cmd->y, cmd->w, cmd->h, cmd->color);
+}
+
+static bool glanda_line_cmd_is_valid(const struct glanda_draw_line_cmd *cmd)
+{
+    if (cmd->x0 >= GLANDA_WIDTH || cmd->y0 >= GLANDA_HEIGHT)
+        return false;
+    if (cmd->x1 >= GLANDA_WIDTH || cmd->y1 >= GLANDA_HEIGHT)
+        return false;
+
+    return true;
 }
 
 static int glanda_drm_ioctl_draw_line(struct drm_device *dev, void *data,
@@ -254,10 +274,8 @@ static int glanda_drm_ioctl_draw_line(struct drm_device *dev, void *data,
     struct glanda_device *gdev = to_glanda(dev);
     struct glanda_draw_line_cmd *cmd = data;
 
-    if (cmd->x0 >= GLANDA_WIDTH || cmd->y0 >= GLANDA_HEIGHT ||
-        cmd->x1 >= GLANDA_WIDTH || cmd->y1 >= GLANDA_HEIGHT) {
+    if (!glanda_line_cmd_is_valid(cmd))
         return -EINVAL;
-    }
 
     return glanda_hw_draw_line(gdev, cmd->x0, cmd->y0, cmd->x1, cmd->y1, cmd->color);
 }
