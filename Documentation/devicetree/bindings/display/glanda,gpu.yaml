@@ -29,17 +29,21 @@ properties:
   interrupts:
     maxItems: 1
 
+  clocks:
+    maxItems: 1
+    description: Bus and pixel clock provided to the FPGA IP.
+
 required:
   - compatible
   - reg
-  - interrupts
 
 additionalProperties: false
 
 examples:
   - |
-    display@c0000000 {
+    gpu@c0000000 {
         compatible = "glanda,gpu-1.0";
         reg = <0xc0000000 0x1000000>;
-        interrupts = <0 40 4>;
+        interrupts = <0 43 4>;
+        clocks = <&osc1>;
     };
