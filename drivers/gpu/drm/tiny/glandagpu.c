@@ -741,6 +741,34 @@ static struct platform_driver glandagpu_driver = {
 	.remove = glandagpu_remove,
 };
 
+#ifdef CONFIG_DRM_GLANDA_X86_TEST
+static struct platform_device *pdev_x86;
+
+static struct resource glandagpu_resources[] = {
+	[0] = {			/* Single resource covering VRAM and MMIO. */
+	       .start = BRIDGE_BASE,
+	       .end = GLANDA_BASE_SIZE,
+	       .flags = IORESOURCE_MEM,},
+	[1] = {			/* IRQ */
+	       .start = 11,
+	       .end = 11,
+	       .flags = IORESOURCE_IRQ,},
+};
+
+static int glandagpu_register_x86_test_device(void)
+{
+	pdev_x86 = platform_device_register_simple("glandagpu", -1,
+						   glandagpu_resources,
+						   ARRAY_SIZE(glandagpu_resources));
+	if (IS_ERR(pdev_x86)) {
+		pr_err("GlandaGPU: Failed to register platform device\n");
+		return PTR_ERR(pdev_x86);
+	}
+
+	return 0;
+}
+#endif
+
 static int __init glandagpu_init(void)
 {
 	int ret;
@@ -750,6 +778,13 @@ static int __init glandagpu_init(void)
 		pr_err("GlandaGPU: Failed to register platform driver\n");
 		return ret;
 	}
+#ifdef CONFIG_DRM_GLANDA_X86_TEST
+	ret = glandagpu_register_x86_test_device();
+	if (ret) {
+		platform_driver_unregister(&glandagpu_driver);
+		return ret;
+	}
+#endif
 
 	pr_info("GlandaGPU: Module loaded successfully\n");
 	return 0;
@@ -757,6 +792,10 @@ static int __init glandagpu_init(void)
 
 static void __exit glandagpu_exit(void)
 {
+#ifdef CONFIG_DRM_GLANDA_X86_TEST
+	if (pdev_x86)
+		platform_device_unregister(pdev_x86);
+#endif
 	platform_driver_unregister(&glandagpu_driver);
 	pr_info("GlandaGPU: Module unloaded\n");
 }
