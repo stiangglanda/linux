@@ -67,18 +67,19 @@
 #define REG_IER     0x18
 
 /* Bit Masks */
-#define INT_DONE    (1 << 0)
-#define INT_VSYNC   (1 << 1)
+#define INT_DONE    BIT(0)
+#define INT_VSYNC   BIT(1)
 
-#define STATUS_BUSY (1 << 0)
+#define STATUS_BUSY BIT(0)
 #define CMD_CLEAR   (0x1)
 #define CMD_RECT    (0x2)
 #define CMD_LINE    (0x3)
-#define CTRL_START  (1 << 4)
+#define CTRL_START  BIT(4)
 
 struct glanda_device {
 	struct drm_device drm;
 
+	/* hw */
 	void __iomem *mmio_base;
 	void __iomem *vram_base;
 	struct device *dev;
@@ -88,8 +89,9 @@ struct glanda_device {
 	wait_queue_head_t cmd_wq;
 	bool cmd_done;
 
-	struct mutex lock;
+	struct mutex lock; /* for every ineration with the hardware */
 
+	/* drm */
 	struct drm_plane primary_plane;
 	struct drm_crtc crtc;
 	struct drm_encoder encoder;
@@ -98,7 +100,7 @@ struct glanda_device {
 
 #define to_glanda(dev) container_of(dev, struct glanda_device, drm)
 
-static const uint32_t glanda_plane_formats[] = {
+static const u32 glanda_plane_formats[] = {
 	DRM_FORMAT_XRGB8888,
 };
 
@@ -328,8 +330,8 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 	u32 y;
 
 	for (y = 0; y < height; y++) {
-		u32 *src = (u32 *) (src_base + y * src_pitch);
-		u32 __iomem *dst = (u32 __iomem *) (dst_base + y * GLANDA_WIDTH * sizeof(u32));
+		u32 *src = (u32 *)(src_base + y * src_pitch);
+		u32 __iomem *dst = (u32 __iomem *)(dst_base + y * GLANDA_WIDTH * sizeof(u32));
 		u32 x;
 
 		for (x = 0; x < width; x++) {
@@ -357,9 +359,10 @@ static int glanda_plane_atomic_check(struct drm_plane *plane,
 
 	crtc_state = drm_atomic_get_new_crtc_state(state, new_plane_state->crtc);
 
-	return drm_atomic_helper_check_plane_state(new_plane_state, crtc_state, DRM_PLANE_NO_SCALING, DRM_PLANE_NO_SCALING,
-											false,	/* can_position */
-											false	/* can_update_disabled */);
+	return drm_atomic_helper_check_plane_state(new_plane_state, crtc_state,
+		DRM_PLANE_NO_SCALING, DRM_PLANE_NO_SCALING,
+		false,	/* can_position */
+		false	/* can_update_disabled */);
 }
 
 static const struct drm_plane_helper_funcs glanda_plane_helper_funcs = {
@@ -526,9 +529,12 @@ static const struct drm_mode_config_funcs glanda_mode_config_funcs = {
  * be a better long-term UAPI direction before this is treated as stable.
  */
 static const struct drm_ioctl_desc glanda_ioctls[] = {
-	DRM_IOCTL_DEF_DRV(GLANDA_CLEAR, glanda_drm_ioctl_clear, DRM_AUTH | DRM_RENDER_ALLOW),
-	DRM_IOCTL_DEF_DRV(GLANDA_DRAW_RECT, glanda_drm_ioctl_draw_rect, DRM_AUTH | DRM_RENDER_ALLOW),
-	DRM_IOCTL_DEF_DRV(GLANDA_DRAW_LINE, glanda_drm_ioctl_draw_line, DRM_AUTH | DRM_RENDER_ALLOW),
+	DRM_IOCTL_DEF_DRV(GLANDA_CLEAR, glanda_drm_ioctl_clear,
+			  DRM_AUTH | DRM_RENDER_ALLOW),
+	DRM_IOCTL_DEF_DRV(GLANDA_DRAW_RECT, glanda_drm_ioctl_draw_rect,
+			  DRM_AUTH | DRM_RENDER_ALLOW),
+	DRM_IOCTL_DEF_DRV(GLANDA_DRAW_LINE, glanda_drm_ioctl_draw_line,
+			  DRM_AUTH | DRM_RENDER_ALLOW),
 };
 
 DEFINE_DRM_GEM_FOPS(glanda_drm_fops);
@@ -597,7 +603,8 @@ static int glandagpu_probe(struct platform_device *pdev)
 
 	gdev->vram_phys = res->start;
 	gdev->vram_base = devm_ioremap(&pdev->dev, res->start, GLANDA_VRAM_SIZE);
-	gdev->mmio_base = devm_ioremap(&pdev->dev, res->start + GLANDA_MMIO_OFFSET, GLANDA_MMIO_SIZE);
+	gdev->mmio_base = devm_ioremap(&pdev->dev, res->start + GLANDA_MMIO_OFFSET,
+				       GLANDA_MMIO_SIZE);
 
 	if (!gdev->vram_base || !gdev->mmio_base) {
 		drm_err(&gdev->drm, "failed to ioremap\n");
@@ -610,7 +617,8 @@ static int glandagpu_probe(struct platform_device *pdev)
 	ret = platform_get_irq(pdev, 0);
 	if (ret > 0) {
 		gdev->irq = ret;
-		ret = devm_request_irq(&pdev->dev, gdev->irq, glanda_irq_handler, IRQF_SHARED, "glandagpu", gdev);
+		ret = devm_request_irq(&pdev->dev, gdev->irq, glanda_irq_handler,
+				       IRQF_SHARED, "glandagpu", gdev);
 		if (ret) {
 			drm_err(&gdev->drm, "Failed to request IRQ %d\n",
 				gdev->irq);
@@ -666,7 +674,8 @@ static int glandagpu_probe(struct platform_device *pdev)
 	}
 	gdev->encoder.possible_crtcs = 1;
 
-	ret = drm_connector_init(&gdev->drm, &gdev->connector, &glanda_connector_funcs, DRM_MODE_CONNECTOR_VGA);
+	ret = drm_connector_init(&gdev->drm, &gdev->connector,
+				 &glanda_connector_funcs, DRM_MODE_CONNECTOR_VGA);
 	if (ret) {
 		drm_err(&gdev->drm, "Failed to initialize connector\n");
 		goto err_mode_cleanup;
