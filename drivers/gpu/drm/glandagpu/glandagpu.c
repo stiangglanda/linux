@@ -302,12 +302,14 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 		return;
 
 	shmem = to_drm_gem_shmem_obj(fb->obj[0]);
-	if (!shmem)
+	if (!shmem)  {
+		drm_err(&gdev->drm, "GlandaGPU: framebuffer is not a shmem GEM object\n");
 		return;
+	}
 
 	ret = drm_gem_shmem_vmap(shmem, &map);
 	if (ret) {
-		dev_err(gdev->dev,
+		drm_err(&gdev->drm,
 			"GlandaGPU: failed to vmap GEM shmem object\n");
 		return;
 	}
@@ -607,8 +609,10 @@ static int glandagpu_probe(struct platform_device *pdev)
 	    devm_ioremap(&pdev->dev, res->start + GLANDA_MMIO_OFFSET,
 			 GLANDA_MMIO_SIZE);
 
-	if (!gdev->vram_base || !gdev->mmio_base)
+	if (!gdev->vram_base || !gdev->mmio_base) {
+		drm_err(&gdev->drm, "failed to ioremap\n");
 		return -ENOMEM;
+	}
 
 	writel(0, gdev->mmio_base + REG_IER);
 	writel(0xFFFFFFFF, gdev->mmio_base + REG_ISR);	//clear flags
@@ -620,16 +624,16 @@ static int glandagpu_probe(struct platform_device *pdev)
 		    devm_request_irq(&pdev->dev, gdev->irq, glanda_irq_handler,
 				     IRQF_SHARED, "glandagpu", gdev);
 		if (ret) {
-			dev_err(&pdev->dev, "Failed to request IRQ %d\n",
+			drm_err(&gdev->drm, "Failed to request IRQ %d\n",
 				gdev->irq);
 			return ret;
 		}
 
 		writel(INT_DONE, gdev->mmio_base + REG_IER);
-		dev_info(&pdev->dev, "IRQ %d requested and enabled\n",
+		drm_info(&gdev->drm, "IRQ %d requested and enabled\n",
 			 gdev->irq);
 	} else {
-		dev_warn(&pdev->dev, "No IRQ found, falling back to polling\n");
+		drm_warn(&gdev->drm, "No IRQ found, falling back to polling\n");
 	}
 
 	// DRM mode config
@@ -646,7 +650,7 @@ static int glandagpu_probe(struct platform_device *pdev)
 				       ARRAY_SIZE(glanda_plane_formats), NULL,
 				       DRM_PLANE_TYPE_PRIMARY, NULL);
 	if (ret) {
-		dev_err(&pdev->dev, "Failed to initialize primary plane\n");
+		drm_err(&gdev->drm, "Failed to initialize primary plane\n");
 		goto err_mode_cleanup;
 	}
 	drm_plane_helper_add(&gdev->primary_plane, &glanda_plane_helper_funcs);
@@ -654,7 +658,7 @@ static int glandagpu_probe(struct platform_device *pdev)
 	// VBlank init
 	ret = drm_vblank_init(&gdev->drm, 1);
 	if (ret) {
-		dev_err(&pdev->dev, "Failed to initialize vblank\n");
+		drm_err(&gdev->drm, "Failed to initialize vblank\n");
 		goto err_mode_cleanup;
 	}
 
@@ -663,7 +667,7 @@ static int glandagpu_probe(struct platform_device *pdev)
 					&gdev->primary_plane, NULL,
 					&glanda_crtc_funcs, NULL);
 	if (ret) {
-		dev_err(&pdev->dev, "Failed to initialize CRTC with planes\n");
+		drm_err(&gdev->drm, "Failed to initialize CRTC with planes\n");
 		goto err_mode_cleanup;
 	}
 	drm_crtc_helper_add(&gdev->crtc, &glanda_crtc_helper_funcs);
@@ -672,7 +676,7 @@ static int glandagpu_probe(struct platform_device *pdev)
 	    drm_simple_encoder_init(&gdev->drm, &gdev->encoder,
 				    DRM_MODE_ENCODER_DAC);
 	if (ret) {
-		dev_err(&pdev->dev, "Failed to initialize encoder\n");
+		drm_err(&gdev->drm, "Failed to initialize encoder\n");
 		goto err_mode_cleanup;
 	}
 	gdev->encoder.possible_crtcs = 1;
@@ -681,7 +685,7 @@ static int glandagpu_probe(struct platform_device *pdev)
 	    drm_connector_init(&gdev->drm, &gdev->connector,
 			       &glanda_connector_funcs, DRM_MODE_CONNECTOR_VGA);
 	if (ret) {
-		dev_err(&pdev->dev, "Failed to initialize connector\n");
+		drm_err(&gdev->drm, "Failed to initialize connector\n");
 		goto err_mode_cleanup;
 	}
 	drm_connector_helper_add(&gdev->connector,
@@ -700,7 +704,7 @@ static int glandagpu_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_mode_cleanup;
 
-	dev_info(&pdev->dev,
+	drm_info(&gdev->drm,
 		 "GlandaGPU DRM Initialized (/dev/dri/cardX created)\n");
 	return 0;
 
@@ -720,9 +724,9 @@ static void glandagpu_remove(struct platform_device *pdev)
 	gdev->cmd_done = true;
 	wake_up_interruptible(&gdev->cmd_wq);
 
+	drm_info(&gdev->drm, "GlandaGPU DRM Driver removed\n");
 	drm_dev_unregister(&gdev->drm);
 	drm_mode_config_cleanup(&gdev->drm);
-	dev_info(&pdev->dev, "GlandaGPU DRM Driver removed\n");
 }
 
 /* Device Tree match table. */

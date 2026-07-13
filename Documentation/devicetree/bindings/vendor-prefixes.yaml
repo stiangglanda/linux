@@ -585,6 +585,8 @@ patternProperties:
     description: Giantec Semiconductor, Inc.
   "^giantplus,.*":
     description: Giantplus Technology Co., Ltd.
+  "^glanda,.*":
+    description: GlandaGPU
   "^glinet,.*":
     description: GL Intelligence, Inc.
   "^globalscale,.*":
