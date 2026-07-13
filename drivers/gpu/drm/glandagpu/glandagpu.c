@@ -309,6 +309,16 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 		return;
 	}
 
+	mutex_lock(&gdev->lock);
+
+	ret = glanda_wait_idle(gdev);
+	if (ret) {
+		drm_err(&gdev->drm, "GlandaGPU: timed out waiting for idle\n");
+		mutex_unlock(&gdev->lock);
+		drm_gem_shmem_vunmap(shmem, &map);
+		return;
+	}
+
 	src_pitch = fb->pitches[0];
 	width = min_t(u32, fb->width, GLANDA_WIDTH);
 	height = min_t(u32, fb->height, GLANDA_HEIGHT);
@@ -332,6 +342,7 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 		}
 	}
 
+	mutex_unlock(&gdev->lock);
 	drm_gem_shmem_vunmap(shmem, &map);
 }
 
