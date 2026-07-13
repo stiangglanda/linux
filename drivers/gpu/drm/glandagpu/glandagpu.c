@@ -5,10 +5,10 @@
 #include <linux/init.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
-#include <linux/delay.h>	// udelay (polling)
-#include <linux/mod_devicetable.h>	// Device Tree parsing
+#include <linux/delay.h>	/* udelay (polling) */
+#include <linux/mod_devicetable.h>	/* Device Tree parsing */
 #include <linux/of.h>
-#include <linux/slab.h>		// GFP_KERNEL
+#include <linux/slab.h>		/* GFP_KERNEL */
 #include <linux/fs.h>
 #include <linux/cdev.h>
 #include <linux/uaccess.h>
@@ -44,7 +44,7 @@
 
 #include <uapi/drm/glanda_drm.h>
 
-// Hardware Constants
+/* Hardware Constants */
 #define GLANDA_WIDTH      640
 #define GLANDA_HEIGHT     480
 #define GLANDA_VRAM_SIZE  (GLANDA_WIDTH * GLANDA_HEIGHT * 4)
@@ -57,7 +57,7 @@
 #define GLANDA_MMIO_BASE  (BRIDGE_BASE + GLANDA_MMIO_OFFSET)
 #define GLANDA_BASE_SIZE  (BRIDGE_BASE + 0x01000000 - 1)
 
-// Register Offsets
+/* Register Offsets */
 #define REG_STATUS  0x00
 #define REG_CTRL    0x04
 #define REG_COORD0  0x08
@@ -66,7 +66,7 @@
 #define REG_ISR     0x14
 #define REG_IER     0x18
 
-// Bit Masks
+/* Bit Masks */
 #define INT_DONE    (1 << 0)
 #define INT_VSYNC   (1 << 1)
 
@@ -78,6 +78,7 @@
 
 struct glanda_device {
 	struct drm_device drm;
+
 	void __iomem *mmio_base;
 	void __iomem *vram_base;
 	struct device *dev;
@@ -90,7 +91,6 @@ struct glanda_device {
 	struct mutex lock;
 
 	struct drm_plane primary_plane;
-
 	struct drm_crtc crtc;
 	struct drm_encoder encoder;
 	struct drm_connector connector;
@@ -127,12 +127,8 @@ static int glanda_wait_idle(struct glanda_device *gdev)
 
 	gdev->cmd_done = false;
 
-	ret = wait_event_interruptible_timeout(gdev->cmd_wq,
-					       gdev->cmd_done
-					       ||
-					       !(readl
-						 (gdev->mmio_base +
-						  REG_STATUS) & STATUS_BUSY),
+	ret = wait_event_interruptible_timeout(gdev->cmd_wq, gdev->cmd_done ||
+					       !(readl(gdev->mmio_base + REG_STATUS) & STATUS_BUSY),
 					       msecs_to_jiffies(500));
 
 	if (ret == 0) {
@@ -287,8 +283,7 @@ static int glanda_drm_ioctl_draw_line(struct drm_device *dev, void *data,
 static void glanda_plane_atomic_update(struct drm_plane *plane,
 				       struct drm_atomic_state *state)
 {
-	struct drm_plane_state *new_state =
-	    drm_atomic_get_new_plane_state(state, plane);
+	struct drm_plane_state *new_state = drm_atomic_get_new_plane_state(state, plane);
 	struct drm_framebuffer *fb = new_state->fb;
 	struct glanda_device *gdev = to_glanda(plane->dev);
 	struct drm_gem_shmem_object *shmem;
@@ -318,26 +313,22 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 	width = min_t(u32, fb->width, GLANDA_WIDTH);
 	height = min_t(u32, fb->height, GLANDA_HEIGHT);
 
-	{
-		u8 __iomem *dst_base = gdev->vram_base;
-		u8 *src_base = map.vaddr;
-		u32 y;
+	u8 __iomem *dst_base = gdev->vram_base;
+	u8 *src_base = map.vaddr;
+	u32 y;
 
-		for (y = 0; y < height; y++) {
-			u32 *src = (u32 *) (src_base + y * src_pitch);
-			u32 __iomem *dst =
-			    (u32 __iomem *) (dst_base +
-					     y * GLANDA_WIDTH * sizeof(u32));
-			u32 x;
+	for (y = 0; y < height; y++) {
+		u32 *src = (u32 *) (src_base + y * src_pitch);
+		u32 __iomem *dst = (u32 __iomem *) (dst_base + y * GLANDA_WIDTH * sizeof(u32));
+		u32 x;
 
-			for (x = 0; x < width; x++) {
-				u32 pixel = src[x];
-				u32 packed = ((pixel >> 12) & 0x0F00) |
-				    ((pixel >> 8) & 0x00F0) |
-				    ((pixel >> 4) & 0x000F);
+		for (x = 0; x < width; x++) {
+			u32 pixel = src[x];
+			u32 packed = ((pixel >> 12) & 0x0F00) |
+				((pixel >> 8) & 0x00F0) |
+				((pixel >> 4) & 0x000F);
 
-				writel_relaxed(packed, &dst[x]);
-			}
+			writel_relaxed(packed, &dst[x]);
 		}
 	}
 
@@ -347,19 +338,17 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 static int glanda_plane_atomic_check(struct drm_plane *plane,
 				     struct drm_atomic_state *state)
 {
-	struct drm_plane_state *new_plane_state =
-	    drm_atomic_get_new_plane_state(state, plane);
+	struct drm_plane_state *new_plane_state = drm_atomic_get_new_plane_state(state, plane);
 	struct drm_crtc_state *crtc_state;
 
 	if (!new_plane_state->crtc)
 		return 0;
 
-	crtc_state =
-	    drm_atomic_get_new_crtc_state(state, new_plane_state->crtc);
+	crtc_state = drm_atomic_get_new_crtc_state(state, new_plane_state->crtc);
 
-	return drm_atomic_helper_check_plane_state(new_plane_state, crtc_state, DRM_PLANE_NO_SCALING, DRM_PLANE_NO_SCALING, false,	/* can_position */
-						   false
-						   /* can_update_disabled */);
+	return drm_atomic_helper_check_plane_state(new_plane_state, crtc_state, DRM_PLANE_NO_SCALING, DRM_PLANE_NO_SCALING,
+											false,	/* can_position */
+											false	/* can_update_disabled */);
 }
 
 static const struct drm_plane_helper_funcs glanda_plane_helper_funcs = {
@@ -382,8 +371,7 @@ static int glanda_connector_get_modes(struct drm_connector *connector)
 
 	mode = drm_mode_create(connector->dev);
 	if (!mode) {
-		dev_err(connector->dev->dev,
-			"GlandaGPU: failed to create display mode\n");
+		dev_err(connector->dev->dev, "GlandaGPU: failed to create display mode\n");
 		return 0;
 	}
 
@@ -449,8 +437,7 @@ static void glanda_crtc_atomic_disable(struct drm_crtc *crtc,
 static void glanda_crtc_atomic_flush(struct drm_crtc *crtc,
 				     struct drm_atomic_state *state)
 {
-	struct drm_crtc_state *new_state =
-	    drm_atomic_get_new_crtc_state(state, crtc);
+	struct drm_crtc_state *new_state = drm_atomic_get_new_crtc_state(state, crtc);
 	struct drm_pending_vblank_event *event;
 
 	if (new_state && new_state->event) {
@@ -510,8 +497,7 @@ static struct drm_framebuffer *glanda_fb_create(struct drm_device *dev,
 						const struct drm_mode_fb_cmd2
 						*mode_cmd)
 {
-	return drm_gem_fb_create_with_funcs(dev, file, mode_cmd,
-					    &glanda_fb_funcs);
+	return drm_gem_fb_create_with_funcs(dev, file, mode_cmd, &glanda_fb_funcs);
 }
 
 static const struct drm_mode_config_funcs glanda_mode_config_funcs = {
@@ -529,12 +515,9 @@ static const struct drm_mode_config_funcs glanda_mode_config_funcs = {
  * be a better long-term UAPI direction before this is treated as stable.
  */
 static const struct drm_ioctl_desc glanda_ioctls[] = {
-	DRM_IOCTL_DEF_DRV(GLANDA_CLEAR, glanda_drm_ioctl_clear,
-			  DRM_AUTH | DRM_RENDER_ALLOW),
-	DRM_IOCTL_DEF_DRV(GLANDA_DRAW_RECT, glanda_drm_ioctl_draw_rect,
-			  DRM_AUTH | DRM_RENDER_ALLOW),
-	DRM_IOCTL_DEF_DRV(GLANDA_DRAW_LINE, glanda_drm_ioctl_draw_line,
-			  DRM_AUTH | DRM_RENDER_ALLOW),
+	DRM_IOCTL_DEF_DRV(GLANDA_CLEAR, glanda_drm_ioctl_clear, DRM_AUTH | DRM_RENDER_ALLOW),
+	DRM_IOCTL_DEF_DRV(GLANDA_DRAW_RECT, glanda_drm_ioctl_draw_rect, DRM_AUTH | DRM_RENDER_ALLOW),
+	DRM_IOCTL_DEF_DRV(GLANDA_DRAW_LINE, glanda_drm_ioctl_draw_line, DRM_AUTH | DRM_RENDER_ALLOW),
 };
 
 DEFINE_DRM_GEM_FOPS(glanda_drm_fops);
@@ -572,7 +555,7 @@ static irqreturn_t glanda_irq_handler(int irq, void *dev_id)
 	if (isr & INT_VSYNC)
 		drm_crtc_handle_vblank(&gdev->crtc);
 
-	// Clear interrupt(W1C)
+	/* Clear interrupt(W1C) */
 	writel(isr, gdev->mmio_base + REG_ISR);
 	return IRQ_HANDLED;
 }
@@ -585,9 +568,7 @@ static int glandagpu_probe(struct platform_device *pdev)
 
 	dev_info(&pdev->dev, "GlandaGPU Probe started\n");
 
-	gdev =
-	    devm_drm_dev_alloc(&pdev->dev, &glanda_drm_driver,
-			       struct glanda_device, drm);
+	gdev = devm_drm_dev_alloc(&pdev->dev, &glanda_drm_driver, struct glanda_device, drm);
 	if (IS_ERR(gdev))
 		return PTR_ERR(gdev);
 
@@ -595,19 +576,17 @@ static int glandagpu_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, gdev);
 
 	mutex_init(&gdev->lock);
-	// Interrupt setup
+	/* Interrupt setup */
 	init_waitqueue_head(&gdev->cmd_wq);
 	gdev->irq = -1;
-	// Map VRAM
+	/* Map VRAM */
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!res)
 		return -ENODEV;
+
 	gdev->vram_phys = res->start;
-	gdev->vram_base =
-	    devm_ioremap(&pdev->dev, res->start, GLANDA_VRAM_SIZE);
-	gdev->mmio_base =
-	    devm_ioremap(&pdev->dev, res->start + GLANDA_MMIO_OFFSET,
-			 GLANDA_MMIO_SIZE);
+	gdev->vram_base = devm_ioremap(&pdev->dev, res->start, GLANDA_VRAM_SIZE);
+	gdev->mmio_base = devm_ioremap(&pdev->dev, res->start + GLANDA_MMIO_OFFSET, GLANDA_MMIO_SIZE);
 
 	if (!gdev->vram_base || !gdev->mmio_base) {
 		drm_err(&gdev->drm, "failed to ioremap\n");
@@ -615,14 +594,12 @@ static int glandagpu_probe(struct platform_device *pdev)
 	}
 
 	writel(0, gdev->mmio_base + REG_IER);
-	writel(0xFFFFFFFF, gdev->mmio_base + REG_ISR);	//clear flags
+	writel(0xFFFFFFFF, gdev->mmio_base + REG_ISR);	/* clear flags */
 
 	ret = platform_get_irq(pdev, 0);
 	if (ret > 0) {
 		gdev->irq = ret;
-		ret =
-		    devm_request_irq(&pdev->dev, gdev->irq, glanda_irq_handler,
-				     IRQF_SHARED, "glandagpu", gdev);
+		ret = devm_request_irq(&pdev->dev, gdev->irq, glanda_irq_handler, IRQF_SHARED, "glandagpu", gdev);
 		if (ret) {
 			drm_err(&gdev->drm, "Failed to request IRQ %d\n",
 				gdev->irq);
@@ -630,13 +607,12 @@ static int glandagpu_probe(struct platform_device *pdev)
 		}
 
 		writel(INT_DONE, gdev->mmio_base + REG_IER);
-		drm_info(&gdev->drm, "IRQ %d requested and enabled\n",
-			 gdev->irq);
+		drm_info(&gdev->drm, "IRQ %d requested and enabled\n", gdev->irq);
 	} else {
 		drm_warn(&gdev->drm, "No IRQ found, falling back to polling\n");
 	}
 
-	// DRM mode config
+	/* DRM mode config */
 	drm_mode_config_init(&gdev->drm);
 	gdev->drm.mode_config.min_width = 640;
 	gdev->drm.mode_config.min_height = 480;
@@ -655,14 +631,14 @@ static int glandagpu_probe(struct platform_device *pdev)
 	}
 	drm_plane_helper_add(&gdev->primary_plane, &glanda_plane_helper_funcs);
 
-	// VBlank init
+	/* VBlank init */
 	ret = drm_vblank_init(&gdev->drm, 1);
 	if (ret) {
 		drm_err(&gdev->drm, "Failed to initialize vblank\n");
 		goto err_mode_cleanup;
 	}
 
-	// CRTC init
+	/* CRTC init */
 	ret = drm_crtc_init_with_planes(&gdev->drm, &gdev->crtc,
 					&gdev->primary_plane, NULL,
 					&glanda_crtc_funcs, NULL);
@@ -672,24 +648,19 @@ static int glandagpu_probe(struct platform_device *pdev)
 	}
 	drm_crtc_helper_add(&gdev->crtc, &glanda_crtc_helper_funcs);
 
-	ret =
-	    drm_simple_encoder_init(&gdev->drm, &gdev->encoder,
-				    DRM_MODE_ENCODER_DAC);
+	ret = drm_simple_encoder_init(&gdev->drm, &gdev->encoder, DRM_MODE_ENCODER_DAC);
 	if (ret) {
 		drm_err(&gdev->drm, "Failed to initialize encoder\n");
 		goto err_mode_cleanup;
 	}
 	gdev->encoder.possible_crtcs = 1;
 
-	ret =
-	    drm_connector_init(&gdev->drm, &gdev->connector,
-			       &glanda_connector_funcs, DRM_MODE_CONNECTOR_VGA);
+	ret = drm_connector_init(&gdev->drm, &gdev->connector, &glanda_connector_funcs, DRM_MODE_CONNECTOR_VGA);
 	if (ret) {
 		drm_err(&gdev->drm, "Failed to initialize connector\n");
 		goto err_mode_cleanup;
 	}
-	drm_connector_helper_add(&gdev->connector,
-				 &glanda_connector_helper_funcs);
+	drm_connector_helper_add(&gdev->connector, &glanda_connector_helper_funcs);
 
 	drm_connector_attach_encoder(&gdev->connector, &gdev->encoder);
 
@@ -704,8 +675,7 @@ static int glandagpu_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_mode_cleanup;
 
-	drm_info(&gdev->drm,
-		 "GlandaGPU DRM Initialized (/dev/dri/cardX created)\n");
+	drm_info(&gdev->drm, "GlandaGPU DRM Initialized (/dev/dri/cardX created)\n");
 	return 0;
 
 err_mode_cleanup:
@@ -739,9 +709,9 @@ MODULE_DEVICE_TABLE(of, glanda_of_match);
 
 static struct platform_driver glandagpu_driver = {
 	.driver = {
-		   .name = "glandagpu",
-		   .of_match_table = glanda_of_match,
-		    },
+		.name = "glandagpu",
+	   .of_match_table = glanda_of_match,
+	},
 	.probe = glandagpu_probe,
 	.remove = glandagpu_remove,
 };
@@ -764,8 +734,7 @@ static int glandagpu_register_x86_test_device(void)
 {
 	pdev_x86 = platform_device_register_simple("glandagpu", -1,
 						   glandagpu_resources,
-						   ARRAY_SIZE
-						   (glandagpu_resources));
+						   ARRAY_SIZE(glandagpu_resources));
 	if (IS_ERR(pdev_x86)) {
 		pr_err("GlandaGPU: Failed to register platform device\n");
 		return PTR_ERR(pdev_x86);
@@ -811,4 +780,4 @@ module_exit(glandagpu_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Leander Kieweg <kieweg.leander@gmail.com>");
-MODULE_DESCRIPTION("GlandaGPU Hardware Accelerated Driver");
+MODULE_DESCRIPTION("DRM driver for GlandaGPU, an FPGA-based 2D GPU with VGA output");
