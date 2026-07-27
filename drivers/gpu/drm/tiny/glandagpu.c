@@ -4,6 +4,7 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/platform_device.h>
+#include <linux/pci.h>
 #include <linux/io.h>
 #include <linux/delay.h>	/* udelay (polling) */
 #include <linux/mod_devicetable.h>	/* Device Tree parsing */
@@ -52,11 +53,8 @@
 #define GLANDA_MMIO_SIZE  32
 #define GLANDA_MMIO_OFFSET 0x00200000
 
-/* Base addresses used by the x86 test device. */
-#define BRIDGE_BASE       0xC0000000
-#define GLANDA_VRAM_BASE  (BRIDGE_BASE + 0x00000000)
-#define GLANDA_MMIO_BASE  (BRIDGE_BASE + GLANDA_MMIO_OFFSET)
-#define GLANDA_BASE_SIZE  (BRIDGE_BASE + 0x01000000 - 1)
+/* QEMU test device ID, from the range reserved for experimental use (docs/specs/pci-ids.rst). */
+#define PCI_DEVICE_ID_GLANDA_GPU 0x10f0
 
 /* Register Offsets */
 #define REG_STATUS  0x00
@@ -582,47 +580,21 @@ static irqreturn_t glanda_irq_handler(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static int glandagpu_probe(struct platform_device *pdev)
+/* Common DRM setup once MMIO/VRAM/IRQ are known(used by both probe paths) */
+static int glanda_drm_init(struct glanda_device *gdev, int irq)
 {
-	struct resource *res;
-	struct glanda_device *gdev;
 	int ret;
 
-	dev_info(&pdev->dev, "GlandaGPU Probe started\n");
-
-	gdev = devm_drm_dev_alloc(&pdev->dev, &glanda_drm_driver, struct glanda_device, drm);
-	if (IS_ERR(gdev))
-		return PTR_ERR(gdev);
-
-	gdev->dev = &pdev->dev;
-	platform_set_drvdata(pdev, gdev);
-
 	mutex_init(&gdev->lock);
-	/* Interrupt setup */
 	init_waitqueue_head(&gdev->cmd_wq);
 	gdev->irq = -1;
-	/* Map VRAM */
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!res)
-		return -ENODEV;
-
-	gdev->vram_phys = res->start;
-	gdev->vram_base = devm_ioremap(&pdev->dev, res->start, GLANDA_VRAM_SIZE);
-	gdev->mmio_base = devm_ioremap(&pdev->dev, res->start + GLANDA_MMIO_OFFSET,
-				       GLANDA_MMIO_SIZE);
-
-	if (!gdev->vram_base || !gdev->mmio_base) {
-		drm_err(&gdev->drm, "failed to ioremap\n");
-		return -ENOMEM;
-	}
 
 	writel(0, gdev->mmio_base + REG_IER);
 	writel(0xFFFFFFFF, gdev->mmio_base + REG_ISR);	/* clear flags */
 
-	ret = platform_get_irq(pdev, 0);
-	if (ret > 0) {
-		gdev->irq = ret;
-		ret = devm_request_irq(&pdev->dev, gdev->irq, glanda_irq_handler,
+	if (irq > 0) {
+		gdev->irq = irq;
+		ret = devm_request_irq(gdev->dev, gdev->irq, glanda_irq_handler,
 				       IRQF_SHARED, "glandagpu", gdev);
 		if (ret) {
 			drm_err(&gdev->drm, "Failed to request IRQ %d\n",
@@ -708,10 +680,9 @@ err_mode_cleanup:
 	return ret;
 }
 
-static void glandagpu_remove(struct platform_device *pdev)
+/* Shared teardown, mirrors glanda_drm_init() */
+static void glanda_drm_fini(struct glanda_device *gdev)
 {
-	struct glanda_device *gdev = platform_get_drvdata(pdev);
-
 	/* Disable interrupts first so no new IRQ work can race the teardown
 	 * below, and wake up anyone still blocked in glanda_wait_idle().
 	 */
@@ -722,6 +693,48 @@ static void glandagpu_remove(struct platform_device *pdev)
 	drm_info(&gdev->drm, "GlandaGPU DRM Driver removed\n");
 	drm_dev_unregister(&gdev->drm);
 	drm_mode_config_cleanup(&gdev->drm);
+}
+
+static int glandagpu_probe(struct platform_device *pdev)
+{
+	struct resource *res;
+	struct glanda_device *gdev;
+	int irq;
+
+	dev_info(&pdev->dev, "GlandaGPU Probe started\n");
+
+	gdev = devm_drm_dev_alloc(&pdev->dev, &glanda_drm_driver, struct glanda_device, drm);
+	if (IS_ERR(gdev))
+		return PTR_ERR(gdev);
+
+	gdev->dev = &pdev->dev;
+	platform_set_drvdata(pdev, gdev);
+
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (!res)
+		return -ENODEV;
+
+	gdev->vram_phys = res->start;
+	gdev->vram_base = devm_ioremap(&pdev->dev, res->start, GLANDA_VRAM_SIZE);
+	gdev->mmio_base = devm_ioremap(&pdev->dev, res->start + GLANDA_MMIO_OFFSET,
+				       GLANDA_MMIO_SIZE);
+	if (!gdev->vram_base || !gdev->mmio_base) {
+		drm_err(&gdev->drm, "failed to ioremap\n");
+		return -ENOMEM;
+	}
+
+	irq = platform_get_irq(pdev, 0);
+	if (irq == -ENXIO)
+		irq = -1;	/* no IRQ resource, fall back to polling */
+	else if (irq < 0)
+		return irq;
+
+	return glanda_drm_init(gdev, irq);
+}
+
+static void glandagpu_remove(struct platform_device *pdev)
+{
+	glanda_drm_fini(platform_get_drvdata(pdev));
 }
 
 /* Device Tree match table. */
@@ -741,33 +754,55 @@ static struct platform_driver glandagpu_driver = {
 	.remove = glandagpu_remove,
 };
 
-#ifdef CONFIG_DRM_GLANDA_X86_TEST
-static struct platform_device *pdev_x86;
+/* PCI probe path for the QEMU test device, real hardware uses platform_driver */
+static int glandagpu_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+{
+	struct glanda_device *gdev;
+	int ret;
 
-static struct resource glandagpu_resources[] = {
-	[0] = {			/* Single resource covering VRAM and MMIO. */
-	       .start = BRIDGE_BASE,
-	       .end = GLANDA_BASE_SIZE,
-	       .flags = IORESOURCE_MEM,},
-	[1] = {			/* IRQ */
-	       .start = 11,
-	       .end = 11,
-	       .flags = IORESOURCE_IRQ,},
+	dev_info(&pdev->dev, "GlandaGPU PCI Probe started\n");
+
+	ret = pcim_enable_device(pdev);
+	if (ret)
+		return ret;
+	pci_set_master(pdev);
+
+	ret = pcim_iomap_regions(pdev, BIT(0) | BIT(1), "glandagpu");
+	if (ret)
+		return ret;
+
+	gdev = devm_drm_dev_alloc(&pdev->dev, &glanda_drm_driver, struct glanda_device, drm);
+	if (IS_ERR(gdev))
+		return PTR_ERR(gdev);
+
+	gdev->dev = &pdev->dev;
+	pci_set_drvdata(pdev, gdev);
+
+	gdev->mmio_base = pcim_iomap_table(pdev)[0];
+	gdev->vram_base = pcim_iomap_table(pdev)[1];
+	gdev->vram_phys = pci_resource_start(pdev, 1);
+
+	return glanda_drm_init(gdev, pdev->irq);
+}
+
+static void glandagpu_pci_remove(struct pci_dev *pdev)
+{
+	glanda_drm_fini(pci_get_drvdata(pdev));
+}
+
+static const struct pci_device_id glanda_pci_ids[] = {
+	{ PCI_DEVICE(PCI_VENDOR_ID_REDHAT_QUMRANET, PCI_DEVICE_ID_GLANDA_GPU) },
+	{ /* end of table */ }
 };
 
-static int glandagpu_register_x86_test_device(void)
-{
-	pdev_x86 = platform_device_register_simple("glandagpu", -1,
-						   glandagpu_resources,
-						   ARRAY_SIZE(glandagpu_resources));
-	if (IS_ERR(pdev_x86)) {
-		pr_err("GlandaGPU: Failed to register platform device\n");
-		return PTR_ERR(pdev_x86);
-	}
+MODULE_DEVICE_TABLE(pci, glanda_pci_ids);
 
-	return 0;
-}
-#endif
+static struct pci_driver glandagpu_pci_driver = {
+	.name = "glandagpu-pci",
+	.id_table = glanda_pci_ids,
+	.probe = glandagpu_pci_probe,
+	.remove = glandagpu_pci_remove,
+};
 
 static int __init glandagpu_init(void)
 {
@@ -778,13 +813,13 @@ static int __init glandagpu_init(void)
 		pr_err("GlandaGPU: Failed to register platform driver\n");
 		return ret;
 	}
-#ifdef CONFIG_DRM_GLANDA_X86_TEST
-	ret = glandagpu_register_x86_test_device();
+
+	ret = pci_register_driver(&glandagpu_pci_driver);
 	if (ret) {
+		pr_err("GlandaGPU: Failed to register PCI driver\n");
 		platform_driver_unregister(&glandagpu_driver);
 		return ret;
 	}
-#endif
 
 	pr_info("GlandaGPU: Module loaded successfully\n");
 	return 0;
@@ -792,10 +827,7 @@ static int __init glandagpu_init(void)
 
 static void __exit glandagpu_exit(void)
 {
-#ifdef CONFIG_DRM_GLANDA_X86_TEST
-	if (pdev_x86)
-		platform_device_unregister(pdev_x86);
-#endif
+	pci_unregister_driver(&glandagpu_pci_driver);
 	platform_driver_unregister(&glandagpu_driver);
 	pr_info("GlandaGPU: Module unloaded\n");
 }
