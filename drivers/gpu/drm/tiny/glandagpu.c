@@ -25,6 +25,7 @@
 #include <drm/drm_gem.h>
 #include <drm/drm_ioctl.h>
 #include <drm/drm_gem_shmem_helper.h>
+#include <drm/drm_gem_atomic_helper.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_vblank.h>
 
@@ -285,32 +286,14 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 				       struct drm_atomic_commit *state)
 {
 	struct drm_plane_state *new_state = drm_atomic_get_new_plane_state(state, plane);
+	struct drm_shadow_plane_state *shadow_state = to_drm_shadow_plane_state(new_state);
 	struct drm_framebuffer *fb = new_state->fb;
 	struct glanda_device *gdev = to_glanda(plane->dev);
-	struct drm_gem_shmem_object *shmem;
-	struct iosys_map map;
-	u32 src_pitch;
-	u32 width;
-	u32 height;
+	u32 src_pitch, width, height, x, y;
 	int ret;
 
 	if (!fb)
 		return;
-
-	shmem = to_drm_gem_shmem_obj(fb->obj[0]);
-	if (!shmem)  {
-		drm_err(&gdev->drm, "GlandaGPU: framebuffer is not a shmem GEM object\n");
-		return;
-	}
-
-	dma_resv_lock(shmem->base.resv, NULL);
-	ret = drm_gem_shmem_vmap_locked(shmem, &map);
-	if (ret) {
-		dma_resv_unlock(shmem->base.resv);
-		drm_err(&gdev->drm,
-			"GlandaGPU: failed to vmap GEM shmem object\n");
-		return;
-	}
 
 	mutex_lock(&gdev->lock);
 
@@ -318,8 +301,6 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 	if (ret) {
 		drm_err(&gdev->drm, "GlandaGPU: timed out waiting for idle\n");
 		mutex_unlock(&gdev->lock);
-		drm_gem_shmem_vunmap_locked(shmem, &map);
-	dma_resv_unlock(shmem->base.resv);
 		return;
 	}
 
@@ -327,17 +308,12 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 	width = min_t(u32, fb->width, GLANDA_WIDTH);
 	height = min_t(u32, fb->height, GLANDA_HEIGHT);
 
-	u8 __iomem *dst_base = gdev->vram_base;
-	u8 *src_base = map.vaddr;
-	u32 y;
-
 	for (y = 0; y < height; y++) {
-		u32 *src = (u32 *)(src_base + y * src_pitch);
-		u32 __iomem *dst = (u32 __iomem *)(dst_base + y * GLANDA_WIDTH * sizeof(u32));
-		u32 x;
+		u32 __iomem *dst = (u32 __iomem *)(gdev->vram_base + y * GLANDA_WIDTH * sizeof(u32));
 
 		for (x = 0; x < width; x++) {
-			u32 pixel = src[x];
+			u32 pixel = iosys_map_rd(&shadow_state->data[0],
+						 y * src_pitch + x * sizeof(u32), u32);
 			u32 packed = ((pixel >> 12) & 0x0F00) |
 				((pixel >> 8) & 0x00F0) |
 				((pixel >> 4) & 0x000F);
@@ -347,8 +323,6 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 	}
 
 	mutex_unlock(&gdev->lock);
-	drm_gem_shmem_vunmap_locked(shmem, &map);
-	dma_resv_unlock(shmem->base.resv);
 }
 
 static int glanda_plane_atomic_check(struct drm_plane *plane,
@@ -369,6 +343,7 @@ static int glanda_plane_atomic_check(struct drm_plane *plane,
 }
 
 static const struct drm_plane_helper_funcs glanda_plane_helper_funcs = {
+	DRM_GEM_SHADOW_PLANE_HELPER_FUNCS,
 	.atomic_update = glanda_plane_atomic_update,
 	.atomic_check = glanda_plane_atomic_check,
 };
@@ -377,9 +352,7 @@ static const struct drm_plane_funcs glanda_plane_funcs = {
 	.update_plane = drm_atomic_helper_update_plane,
 	.disable_plane = drm_atomic_helper_disable_plane,
 	.destroy = drm_plane_cleanup,
-	.reset = drm_atomic_helper_plane_reset,
-	.atomic_duplicate_state = drm_atomic_helper_plane_duplicate_state,
-	.atomic_destroy_state = drm_atomic_helper_plane_destroy_state,
+	DRM_GEM_SHADOW_PLANE_FUNCS,
 };
 
 static int glanda_connector_get_modes(struct drm_connector *connector)
