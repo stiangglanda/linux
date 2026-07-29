@@ -277,6 +277,10 @@ static const struct drm_connector_helper_funcs glanda_connector_helper_funcs = {
 	.get_modes = glanda_connector_get_modes,
 };
 
+static const struct drm_encoder_funcs glanda_encoder_funcs = {
+	.destroy = drm_encoder_cleanup,
+};
+
 static const struct drm_connector_funcs glanda_connector_funcs = {
 	.fill_modes = drm_helper_probe_single_connector_modes,
 	.destroy = drm_connector_cleanup,
@@ -373,7 +377,8 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 	}
 	drm_crtc_helper_add(&gdev->crtc, &glanda_crtc_helper_funcs);
 
-	ret = drm_simple_encoder_init(&gdev->drm, &gdev->encoder, DRM_MODE_ENCODER_DAC);
+	ret = drm_encoder_init(&gdev->drm, &gdev->encoder, &glanda_encoder_funcs,
+			       DRM_MODE_ENCODER_DAC, NULL);
 	if (ret) {
 		drm_err(&gdev->drm, "Failed to initialize encoder\n");
 		return ret;
