@@ -116,7 +116,8 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 	height = min_t(u32, fb->height, GLANDA_HEIGHT);
 
 	for (y = 0; y < height; y++) {
-		u32 __iomem *dst = (u32 __iomem *)(gdev->vram_base + y * GLANDA_WIDTH * sizeof(u32));
+		size_t offset = y * GLANDA_WIDTH * sizeof(u32);
+		u32 __iomem *dst = (u32 __iomem *)(gdev->vram_base + offset);
 
 		for (x = 0; x < width; x++) {
 			u32 pixel = iosys_map_rd(&shadow_state->data[0],
@@ -428,7 +429,7 @@ static void glanda_drm_fini(struct glanda_device *gdev)
 {
 	drm_dev_unplug(&gdev->drm);
 	drm_atomic_helper_shutdown(&gdev->drm);
-	
+
 	/* Disable interrupts */
 	writel(0, gdev->mmio_base + REG_IER);
 
