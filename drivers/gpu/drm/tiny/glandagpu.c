@@ -322,13 +322,15 @@ static const struct drm_driver glanda_drm_driver = {
 static irqreturn_t glanda_irq_handler(int irq, void *dev_id)
 {
 	struct glanda_device *gdev = dev_id;
+	u32 isr, ier;
 
 	if (!gdev || !gdev->mmio_base)
 		return IRQ_NONE;
 
-	u32 isr = readl(gdev->mmio_base + REG_ISR);
+	isr = readl(gdev->mmio_base + REG_ISR);
+	ier = readl(gdev->mmio_base + REG_IER);
 
-	if (!isr)
+	if (!(isr & ier))
 		return IRQ_NONE;
 
 	if (isr & INT_VSYNC)
@@ -348,22 +350,6 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 
 	writel(0, gdev->mmio_base + REG_IER);
 	writel(0xFFFFFFFF, gdev->mmio_base + REG_ISR);	/* clear flags */
-
-	if (irq > 0) {
-		gdev->irq = irq;
-		ret = devm_request_irq(gdev->dev, gdev->irq, glanda_irq_handler,
-				       IRQF_SHARED, "glandagpu", gdev);
-		if (ret) {
-			drm_err(&gdev->drm, "Failed to request IRQ %d\n",
-				gdev->irq);
-			return ret;
-		}
-
-		writel(INT_DONE, gdev->mmio_base + REG_IER);
-		drm_info(&gdev->drm, "IRQ %d requested and enabled\n", gdev->irq);
-	} else {
-		drm_warn(&gdev->drm, "No IRQ found, falling back to polling\n");
-	}
 
 	/* DRM mode config */
 	drm_mode_config_init(&gdev->drm);
@@ -424,6 +410,22 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 	mutex_unlock(&gdev->drm.mode_config.mutex);
 
 	drm_mode_config_reset(&gdev->drm);
+
+	if (irq > 0) {
+		gdev->irq = irq;
+		ret = devm_request_irq(gdev->dev, gdev->irq, glanda_irq_handler,
+				       IRQF_SHARED, "glandagpu", gdev);
+		if (ret) {
+			drm_err(&gdev->drm, "Failed to request IRQ %d\n",
+				gdev->irq);
+			return ret;
+		}
+
+		writel(INT_DONE, gdev->mmio_base + REG_IER);
+		drm_info(&gdev->drm, "IRQ %d requested and enabled\n", gdev->irq);
+	} else {
+		drm_warn(&gdev->drm, "No IRQ found, falling back to polling\n");
+	}
 
 	ret = drm_dev_register(&gdev->drm, 0);
 	if (ret)
