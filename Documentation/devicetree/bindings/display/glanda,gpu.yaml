@@ -11,10 +11,12 @@ maintainers:
 
 description: |
   GlandaGPU is a custom FPGA soft-IP core providing a simple
-  2D hardware-accelerated drawing engine (clear/rect/line) with a
-  VGA-compatible display output. The register window covers a
-  combined VRAM + MMIO region, with MMIO registers at a fixed
-  offset within it.
+  2D hardware-accelerated drawing engine with a VGA-compatible
+  display output. The register window covers a combined VRAM + MMIO
+  region, with MMIO registers at a fixed offset within it.
+
+  For hardware designs and RTL sources, see:
+  https://github.com/stiangglanda/GlandaGPU
 
 properties:
   compatible:
@@ -36,14 +38,19 @@ properties:
 required:
   - compatible
   - reg
+  - clocks
 
 additionalProperties: false
 
 examples:
   - |
+    #include <dt-bindings/interrupt-controller/arm-gic.h>
+
     gpu@c0000000 {
         compatible = "glanda,gpu-1.0";
         reg = <0xc0000000 0x1000000>;
-        interrupts = <0 43 4>;
+        interrupt-parent = <&intc>;
+        interrupts = <GIC_SPI 43 IRQ_TYPE_LEVEL_HIGH>;
         clocks = <&osc1>;
     };
+    
