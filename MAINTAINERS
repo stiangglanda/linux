@@ -8081,7 +8081,6 @@ M:	Leander Kieweg <kieweg.leander@gmail.com>
 S:	Maintained
 F:	Documentation/devicetree/bindings/display/glanda,gpu.yaml
 F:	drivers/gpu/drm/tiny/glandagpu.c
-F:	include/uapi/drm/glanda_drm.h
 
 DRM DRIVER FOR GRAIN MEDIA GM12U320 PROJECTORS
 M:	Hans de Goede <hansg@kernel.org>

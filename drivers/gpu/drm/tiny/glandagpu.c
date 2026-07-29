@@ -45,8 +45,6 @@
 #include <drm/drm_damage_helper.h>
 #include <drm/drm_print.h>
 
-#include <uapi/drm/glanda_drm.h>
-
 /* Hardware Constants */
 #define GLANDA_WIDTH      640
 #define GLANDA_HEIGHT     480
@@ -86,10 +84,6 @@ struct glanda_device {
 	phys_addr_t vram_phys;
 
 	int irq;
-	wait_queue_head_t cmd_wq;
-	bool cmd_done;
-
-	struct mutex lock; /* for every ineration with the hardware */
 
 	/* drm */
 	struct drm_plane primary_plane;
@@ -104,184 +98,6 @@ static const u32 glanda_plane_formats[] = {
 	DRM_FORMAT_XRGB8888,
 };
 
-static int glanda_wait_idle(struct glanda_device *gdev)
-{
-	int ret;
-	unsigned int status;
-
-	status = readl(gdev->mmio_base + REG_STATUS);
-	if (!(status & STATUS_BUSY))
-		return 0;
-
-	if (gdev->irq < 0) {
-		int timeout = 10000;
-
-		do {
-			status = readl(gdev->mmio_base + REG_STATUS);
-			if (!(status & STATUS_BUSY))
-				return 0;
-			udelay(1);
-		} while (--timeout > 0);
-
-		dev_err(gdev->dev, "GlandaGPU: polling wait_idle timeout\n");
-		return -ETIMEDOUT;
-	}
-
-	gdev->cmd_done = false;
-
-	ret = wait_event_interruptible_timeout(gdev->cmd_wq, gdev->cmd_done ||
-					       !(readl(gdev->mmio_base + REG_STATUS) & STATUS_BUSY),
-					       msecs_to_jiffies(500));
-
-	if (ret == 0) {
-		dev_err(gdev->dev, "GlandaGPU: IRQ wait_idle timeout\n");
-		return -ETIMEDOUT;
-	} else if (ret < 0) {
-		return ret;
-	}
-
-	return 0;
-}
-
-static int glanda_hw_clear(struct glanda_device *gdev, int color)
-{
-	u32 ctrl;
-	int ret;
-
-	if (mutex_lock_interruptible(&gdev->lock))
-		return -ERESTARTSYS;
-
-	ret = glanda_wait_idle(gdev);
-	if (ret) {
-		mutex_unlock(&gdev->lock);
-		return ret;
-	}
-
-	writel(color, gdev->mmio_base + REG_COLOR);
-	ctrl = CTRL_START | CMD_CLEAR;
-	writel(ctrl, gdev->mmio_base + REG_CTRL);
-
-	mutex_unlock(&gdev->lock);
-	return 0;
-}
-
-static int glanda_hw_draw_rect(struct glanda_device *gdev,
-			       int x, int y, int w, int h, int color)
-{
-	u32 coord0, coord1, ctrl;
-	int ret;
-
-	if (mutex_lock_interruptible(&gdev->lock))
-		return -ERESTARTSYS;
-
-	ret = glanda_wait_idle(gdev);
-	if (ret) {
-		mutex_unlock(&gdev->lock);
-		return ret;
-	}
-
-	coord0 = (y << 16) | (x & 0x3FF);
-	coord1 = (h << 16) | (w & 0x3FF);
-
-	writel(coord0, gdev->mmio_base + REG_COORD0);
-	writel(coord1, gdev->mmio_base + REG_COORD1);
-	writel(color, gdev->mmio_base + REG_COLOR);
-
-	ctrl = CTRL_START | CMD_RECT;
-	writel(ctrl, gdev->mmio_base + REG_CTRL);
-
-	mutex_unlock(&gdev->lock);
-	return 0;
-}
-
-static int glanda_hw_draw_line(struct glanda_device *gdev,
-			       int x1, int y1, int x2, int y2, int color)
-{
-	u32 coord0, coord1, ctrl;
-	int ret;
-
-	if (mutex_lock_interruptible(&gdev->lock))
-		return -ERESTARTSYS;
-
-	ret = glanda_wait_idle(gdev);
-	if (ret) {
-		mutex_unlock(&gdev->lock);
-		return ret;
-	}
-
-	coord0 = (y1 << 16) | (x1 & 0x3FF);
-	coord1 = (y2 << 16) | (x2 & 0x3FF);
-
-	writel(coord0, gdev->mmio_base + REG_COORD0);
-	writel(coord1, gdev->mmio_base + REG_COORD1);
-	writel(color, gdev->mmio_base + REG_COLOR);
-
-	ctrl = CTRL_START | CMD_LINE;
-	writel(ctrl, gdev->mmio_base + REG_CTRL);
-
-	mutex_unlock(&gdev->lock);
-	return 0;
-}
-
-static int glanda_drm_ioctl_clear(struct drm_device *dev, void *data,
-				  struct drm_file *file_priv)
-{
-	struct glanda_device *gdev = to_glanda(dev);
-	struct glanda_clear_cmd *cmd = data;
-
-	return glanda_hw_clear(gdev, cmd->color);
-}
-
-static bool glanda_rect_cmd_is_valid(const struct glanda_draw_rect_cmd *cmd)
-{
-	if (cmd->x >= GLANDA_WIDTH || cmd->y >= GLANDA_HEIGHT)
-		return false;
-	if (cmd->w > GLANDA_WIDTH || cmd->h > GLANDA_HEIGHT)
-		return false;
-	if (cmd->x + cmd->w > GLANDA_WIDTH)
-		return false;
-	if (cmd->y + cmd->h > GLANDA_HEIGHT)
-		return false;
-
-	return true;
-}
-
-static int glanda_drm_ioctl_draw_rect(struct drm_device *dev, void *data,
-				      struct drm_file *file_priv)
-{
-	struct glanda_device *gdev = to_glanda(dev);
-	struct glanda_draw_rect_cmd *cmd = data;
-
-	if (!glanda_rect_cmd_is_valid(cmd))
-		return -EINVAL;
-
-	return glanda_hw_draw_rect(gdev, cmd->x, cmd->y, cmd->w, cmd->h,
-				   cmd->color);
-}
-
-static bool glanda_line_cmd_is_valid(const struct glanda_draw_line_cmd *cmd)
-{
-	if (cmd->x0 >= GLANDA_WIDTH || cmd->y0 >= GLANDA_HEIGHT)
-		return false;
-	if (cmd->x1 >= GLANDA_WIDTH || cmd->y1 >= GLANDA_HEIGHT)
-		return false;
-
-	return true;
-}
-
-static int glanda_drm_ioctl_draw_line(struct drm_device *dev, void *data,
-				      struct drm_file *file_priv)
-{
-	struct glanda_device *gdev = to_glanda(dev);
-	struct glanda_draw_line_cmd *cmd = data;
-
-	if (!glanda_line_cmd_is_valid(cmd))
-		return -EINVAL;
-
-	return glanda_hw_draw_line(gdev, cmd->x0, cmd->y0, cmd->x1, cmd->y1,
-				   cmd->color);
-}
-
 static void glanda_plane_atomic_update(struct drm_plane *plane,
 				       struct drm_atomic_commit *state)
 {
@@ -290,19 +106,13 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 	struct drm_framebuffer *fb = new_state->fb;
 	struct glanda_device *gdev = to_glanda(plane->dev);
 	u32 src_pitch, width, height, x, y;
-	int ret;
+	int idx;
 
 	if (!fb)
 		return;
 
-	mutex_lock(&gdev->lock);
-
-	ret = glanda_wait_idle(gdev);
-	if (ret) {
-		drm_err(&gdev->drm, "GlandaGPU: timed out waiting for idle\n");
-		mutex_unlock(&gdev->lock);
+	if (!drm_dev_enter(plane->dev, &idx))
 		return;
-	}
 
 	src_pitch = fb->pitches[0];
 	width = min_t(u32, fb->width, GLANDA_WIDTH);
@@ -322,7 +132,7 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 		}
 	}
 
-	mutex_unlock(&gdev->lock);
+	drm_dev_exit(idx);
 }
 
 static int glanda_plane_atomic_check(struct drm_plane *plane,
@@ -496,23 +306,6 @@ static const struct drm_mode_config_funcs glanda_mode_config_funcs = {
 	.atomic_commit = drm_atomic_helper_commit,
 };
 
-/*
- * RFC NOTE: These three fixed-function ioctls (clear/rect/line) are a
- * minimal placeholder UAPI to demonstrate the hardware's 2D drawing
- * capability end-to-end. Given plans to add polygon/3D rendering support
- * in the future, feedback is explicitly requested on whether a generic
- * command-buffer submission ioctl (similar to virtio_gpu) would
- * be a better long-term UAPI direction before this is treated as stable.
- */
-static const struct drm_ioctl_desc glanda_ioctls[] = {
-	DRM_IOCTL_DEF_DRV(GLANDA_CLEAR, glanda_drm_ioctl_clear,
-			  DRM_AUTH | DRM_RENDER_ALLOW),
-	DRM_IOCTL_DEF_DRV(GLANDA_DRAW_RECT, glanda_drm_ioctl_draw_rect,
-			  DRM_AUTH | DRM_RENDER_ALLOW),
-	DRM_IOCTL_DEF_DRV(GLANDA_DRAW_LINE, glanda_drm_ioctl_draw_line,
-			  DRM_AUTH | DRM_RENDER_ALLOW),
-};
-
 DEFINE_DRM_GEM_FOPS(glanda_drm_fops);
 
 static const struct drm_driver glanda_drm_driver = {
@@ -524,8 +317,6 @@ static const struct drm_driver glanda_drm_driver = {
 	.minor = 0,
 	.fops = &glanda_drm_fops,
 	.dumb_create = drm_gem_shmem_dumb_create,
-	.ioctls = glanda_ioctls,
-	.num_ioctls = ARRAY_SIZE(glanda_ioctls),
 };
 
 static irqreturn_t glanda_irq_handler(int irq, void *dev_id)
@@ -540,11 +331,6 @@ static irqreturn_t glanda_irq_handler(int irq, void *dev_id)
 	if (!isr)
 		return IRQ_NONE;
 
-	if (isr & INT_DONE) {
-		gdev->cmd_done = true;
-		wake_up_interruptible(&gdev->cmd_wq);
-	}
-
 	if (isr & INT_VSYNC)
 		drm_crtc_handle_vblank(&gdev->crtc);
 
@@ -558,8 +344,6 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 {
 	int ret;
 
-	mutex_init(&gdev->lock);
-	init_waitqueue_head(&gdev->cmd_wq);
 	gdev->irq = -1;
 
 	writel(0, gdev->mmio_base + REG_IER);
@@ -656,16 +440,12 @@ err_mode_cleanup:
 /* Shared teardown, mirrors glanda_drm_init() */
 static void glanda_drm_fini(struct glanda_device *gdev)
 {
-	/* Disable interrupts first so no new IRQ work can race the teardown
-	 * below, and wake up anyone still blocked in glanda_wait_idle().
-	 */
+	drm_dev_unplug(&gdev->drm);
+	
+	/* Disable interrupts */
 	writel(0, gdev->mmio_base + REG_IER);
-	gdev->cmd_done = true;
-	wake_up_interruptible(&gdev->cmd_wq);
 
 	drm_info(&gdev->drm, "GlandaGPU DRM Driver removed\n");
-	drm_dev_unregister(&gdev->drm);
-	drm_mode_config_cleanup(&gdev->drm);
 }
 
 static int glandagpu_probe(struct platform_device *pdev)
