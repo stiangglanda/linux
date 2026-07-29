@@ -7,7 +7,6 @@
 #include <linux/pci.h>
 #include <linux/io.h>
 #include <linux/delay.h>	/* udelay (polling) */
-#include <linux/mod_devicetable.h>	/* Device Tree parsing */
 #include <linux/of.h>
 #include <linux/slab.h>		/* GFP_KERNEL */
 #include <linux/fs.h>
