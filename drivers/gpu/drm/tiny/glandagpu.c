@@ -239,7 +239,7 @@ static void glanda_crtc_atomic_flush(struct drm_crtc *crtc,
 	struct drm_crtc_state *new_state = drm_atomic_get_new_crtc_state(state, crtc);
 	struct drm_pending_vblank_event *event;
 
-	if (new_state && new_state->event) {
+	if (new_state->event) {
 		event = new_state->event;
 
 		new_state->event = NULL;
