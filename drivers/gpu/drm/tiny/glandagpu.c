@@ -80,7 +80,6 @@ struct glanda_device {
 	/* hw */
 	void __iomem *mmio_base;
 	void __iomem *vram_base;
-	struct device *dev;
 	phys_addr_t vram_phys;
 
 	int irq;
@@ -404,7 +403,7 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 
 	if (irq > 0) {
 		gdev->irq = irq;
-		ret = devm_request_irq(gdev->dev, gdev->irq, glanda_irq_handler,
+		ret = devm_request_irq(gdev->drm.dev, gdev->irq, glanda_irq_handler,
 				       IRQF_SHARED, "glandagpu", gdev);
 		if (ret) {
 			drm_err(&gdev->drm, "Failed to request IRQ %d\n",
@@ -450,7 +449,6 @@ static int glandagpu_probe(struct platform_device *pdev)
 	if (IS_ERR(gdev))
 		return PTR_ERR(gdev);
 
-	gdev->dev = &pdev->dev;
 	platform_set_drvdata(pdev, gdev);
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
@@ -518,7 +516,6 @@ static int glandagpu_pci_probe(struct pci_dev *pdev, const struct pci_device_id 
 	if (IS_ERR(gdev))
 		return PTR_ERR(gdev);
 
-	gdev->dev = &pdev->dev;
 	pci_set_drvdata(pdev, gdev);
 
 	gdev->mmio_base = pcim_iomap_table(pdev)[0];
