@@ -32,7 +32,6 @@
 #include <drm/drm_encoder.h>
 #include <drm/drm_modeset_helper.h>
 #include <drm/drm_probe_helper.h>
-#include <drm/drm_simple_kms_helper.h>
 #include <drm/drm_gem_framebuffer_helper.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_crtc_helper.h>
@@ -298,7 +297,7 @@ DEFINE_DRM_GEM_FOPS(glanda_drm_fops);
 
 static const struct drm_driver glanda_drm_driver = {
 	.driver_features =
-	    DRIVER_GEM | DRIVER_MODESET | DRIVER_ATOMIC | DRIVER_RENDER,
+	    DRIVER_GEM | DRIVER_MODESET | DRIVER_ATOMIC,
 	.name = "glandagpu",
 	.desc = "GlandaGPU Hardware Accelerated DRM Driver",
 	.major = 1,
