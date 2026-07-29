@@ -366,7 +366,7 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 				       DRM_PLANE_TYPE_PRIMARY, NULL);
 	if (ret) {
 		drm_err(&gdev->drm, "Failed to initialize primary plane\n");
-		goto err_mode_cleanup;
+		return ret;
 	}
 	drm_plane_helper_add(&gdev->primary_plane, &glanda_plane_helper_funcs);
 
@@ -374,7 +374,7 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 	ret = drm_vblank_init(&gdev->drm, 1);
 	if (ret) {
 		drm_err(&gdev->drm, "Failed to initialize vblank\n");
-		goto err_mode_cleanup;
+		return ret;
 	}
 
 	/* CRTC init */
@@ -383,14 +383,14 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 					&glanda_crtc_funcs, NULL);
 	if (ret) {
 		drm_err(&gdev->drm, "Failed to initialize CRTC with planes\n");
-		goto err_mode_cleanup;
+		return ret;
 	}
 	drm_crtc_helper_add(&gdev->crtc, &glanda_crtc_helper_funcs);
 
 	ret = drm_simple_encoder_init(&gdev->drm, &gdev->encoder, DRM_MODE_ENCODER_DAC);
 	if (ret) {
 		drm_err(&gdev->drm, "Failed to initialize encoder\n");
-		goto err_mode_cleanup;
+		return ret;
 	}
 	gdev->encoder.possible_crtcs = 1;
 
@@ -398,7 +398,7 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 				 &glanda_connector_funcs, DRM_MODE_CONNECTOR_VGA);
 	if (ret) {
 		drm_err(&gdev->drm, "Failed to initialize connector\n");
-		goto err_mode_cleanup;
+		return ret;
 	}
 	drm_connector_helper_add(&gdev->connector, &glanda_connector_helper_funcs);
 
@@ -429,14 +429,10 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 
 	ret = drm_dev_register(&gdev->drm, 0);
 	if (ret)
-		goto err_mode_cleanup;
+		return ret;
 
 	drm_info(&gdev->drm, "GlandaGPU DRM Initialized (/dev/dri/cardX created)\n");
 	return 0;
-
-err_mode_cleanup:
-	drm_mode_config_cleanup(&gdev->drm);
-	return ret;
 }
 
 /* Shared teardown, mirrors glanda_drm_init() */
