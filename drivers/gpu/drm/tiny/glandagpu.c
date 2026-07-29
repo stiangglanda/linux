@@ -286,22 +286,8 @@ static const struct drm_connector_funcs glanda_connector_funcs = {
 	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
 };
 
-static const struct drm_framebuffer_funcs glanda_fb_funcs = {
-	.destroy = drm_gem_fb_destroy,
-	.create_handle = drm_gem_fb_create_handle,
-	.dirty = drm_atomic_helper_dirtyfb,
-};
-
-static struct drm_framebuffer *glanda_fb_create(struct drm_device *dev,
-						struct drm_file *file,
-						const struct drm_format_info *info,
-						const struct drm_mode_fb_cmd2 *mode_cmd)
-{
-	return drm_gem_fb_create_with_funcs(dev, file, info, mode_cmd, &glanda_fb_funcs);
-}
-
 static const struct drm_mode_config_funcs glanda_mode_config_funcs = {
-	.fb_create = glanda_fb_create,
+	.fb_create = drm_gem_fb_create_with_dirty,
 	.atomic_check = drm_atomic_helper_check,
 	.atomic_commit = drm_atomic_helper_commit,
 };
