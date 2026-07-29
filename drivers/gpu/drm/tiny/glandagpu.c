@@ -439,6 +439,7 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 static void glanda_drm_fini(struct glanda_device *gdev)
 {
 	drm_dev_unplug(&gdev->drm);
+	drm_atomic_helper_shutdown(&gdev->drm);
 	
 	/* Disable interrupts */
 	writel(0, gdev->mmio_base + REG_IER);
