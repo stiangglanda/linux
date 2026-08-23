@@ -476,7 +476,7 @@ static int glandagpu_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
-	irq = platform_get_irq(pdev, 0);
+	irq = platform_get_irq_optional(pdev, 0);
 	if (irq == -ENXIO)
 		irq = -1;	/* no IRQ resource, fall back to polling */
 	else if (irq < 0)
