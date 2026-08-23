@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 %YAML 1.2
 ---
-$id: http://devicetree.org/schemas/display/glanda,gpu.yaml#
+$id: http://devicetree.org/schemas/display/kieweg,gpu.yaml#
 $schema: http://devicetree.org/meta-schemas/core.yaml#
 
 title: GlandaGPU 2D Hardware Accelerated Display Controller
@@ -20,7 +20,7 @@ description: |
 
 properties:
   compatible:
-    const: glanda,gpu-1.0
+    const: kieweg,gpu-1.0
 
   reg:
     maxItems: 1
@@ -47,7 +47,7 @@ examples:
     #include <dt-bindings/interrupt-controller/arm-gic.h>
 
     gpu@c0000000 {
-        compatible = "glanda,gpu-1.0";
+        compatible = "kieweg,gpu-1.0";
         reg = <0xc0000000 0x1000000>;
         interrupt-parent = <&intc>;
         interrupts = <GIC_SPI 43 IRQ_TYPE_LEVEL_HIGH>;

@@ -486,7 +486,7 @@ static void glandagpu_remove(struct platform_device *pdev)
 
 /* Device Tree match table. */
 static const struct of_device_id glanda_of_match[] = {
-	{ .compatible = "glanda,gpu-1.0" },
+	{ .compatible = "kieweg,gpu-1.0" },
 	{ }
 };
 
