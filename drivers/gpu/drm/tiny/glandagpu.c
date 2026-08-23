@@ -459,10 +459,17 @@ static int glandagpu_probe(struct platform_device *pdev)
 	if (!res)
 		return -ENODEV;
 
+	if (resource_size(res) < GLANDA_MMIO_OFFSET + GLANDA_MMIO_SIZE) {
+		dev_err(&pdev->dev, "MMIO region too small: %llu bytes, need at least %u\n",
+			(unsigned long long)resource_size(res),
+			GLANDA_MMIO_OFFSET + GLANDA_MMIO_SIZE);
+		return -EINVAL;
+	}
+
 	gdev->vram_phys = res->start;
 	gdev->vram_base = devm_ioremap(&pdev->dev, res->start, GLANDA_VRAM_SIZE);
 	gdev->mmio_base = devm_ioremap(&pdev->dev, res->start + GLANDA_MMIO_OFFSET,
-				       GLANDA_MMIO_SIZE);
+					   GLANDA_MMIO_SIZE);
 	if (!gdev->vram_base || !gdev->mmio_base) {
 		drm_err(&gdev->drm, "failed to ioremap\n");
 		return -ENOMEM;
