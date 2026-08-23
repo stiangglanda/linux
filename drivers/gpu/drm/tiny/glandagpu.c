@@ -519,6 +519,14 @@ static int glandagpu_pci_probe(struct pci_dev *pdev, const struct pci_device_id 
 		return ret;
 	pci_set_master(pdev);
 
+	if (pci_resource_len(pdev, 0) < GLANDA_MMIO_SIZE ||
+    	pci_resource_len(pdev, 1) < GLANDA_VRAM_SIZE) {
+		dev_err(&pdev->dev, "BAR too small: BAR0=%llu (need %u), BAR1=%llu (need %u)\n",
+			(unsigned long long)pci_resource_len(pdev, 0), GLANDA_MMIO_SIZE,
+			(unsigned long long)pci_resource_len(pdev, 1), GLANDA_VRAM_SIZE);
+		return -EINVAL;
+	}
+
 	ret = pcim_iomap_regions(pdev, BIT(0) | BIT(1), "glandagpu");
 	if (ret)
 		return ret;
