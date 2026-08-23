@@ -9,9 +9,6 @@
 #include <linux/delay.h>	/* udelay (polling) */
 #include <linux/of.h>
 #include <linux/slab.h>		/* GFP_KERNEL */
-#include <linux/fs.h>
-#include <linux/cdev.h>
-#include <linux/uaccess.h>
 #include <linux/interrupt.h>
 #include <linux/wait.h>
 #include <linux/mm.h>
