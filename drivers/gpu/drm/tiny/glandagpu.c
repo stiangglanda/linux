@@ -501,7 +501,7 @@ MODULE_DEVICE_TABLE(of, glanda_of_match);
 static struct platform_driver glandagpu_driver = {
 	.driver = {
 		.name = "glandagpu",
-	   .of_match_table = glanda_of_match,
+		.of_match_table = glanda_of_match,
 	},
 	.probe = glandagpu_probe,
 	.remove = glandagpu_remove,
