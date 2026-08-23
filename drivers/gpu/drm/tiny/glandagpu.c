@@ -340,7 +340,10 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 	writel(0xFFFFFFFF, gdev->mmio_base + REG_ISR);	/* clear flags */
 
 	/* DRM mode config */
-	drm_mode_config_init(&gdev->drm);
+	ret = drm_mode_config_init(&gdev->drm);
+	if (ret)
+		return ret;
+
 	gdev->drm.mode_config.min_width = 640;
 	gdev->drm.mode_config.min_height = 480;
 	gdev->drm.mode_config.max_width = 640;
