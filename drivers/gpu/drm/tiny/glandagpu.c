@@ -413,7 +413,7 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 			return ret;
 		}
 
-		writel(INT_DONE, gdev->mmio_base + REG_IER);
+		writel(INT_VSYNC, gdev->mmio_base + REG_IER);
 		drm_info(&gdev->drm, "IRQ %d requested and enabled\n", gdev->irq);
 	} else {
 		drm_warn(&gdev->drm, "No IRQ found, falling back to polling\n");
