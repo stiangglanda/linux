@@ -122,6 +122,7 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 		for (x = 0; x < width; x++) {
 			u32 pixel = iosys_map_rd(&shadow_state->data[0],
 						 y * src_pitch + x * sizeof(u32), u32);
+			pixel = le32_to_cpu((__force __le32)pixel);
 			u32 packed = ((pixel >> 12) & 0x0F00) |
 				((pixel >> 8) & 0x00F0) |
 				((pixel >> 4) & 0x000F);
