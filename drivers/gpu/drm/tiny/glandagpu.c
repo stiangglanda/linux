@@ -493,7 +493,7 @@ static void glandagpu_remove(struct platform_device *pdev)
 /* Device Tree match table. */
 static const struct of_device_id glanda_of_match[] = {
 	{ .compatible = "glanda,gpu-1.0" },
-	{ /* end of table */  }
+	{ }
 };
 
 MODULE_DEVICE_TABLE(of, glanda_of_match);
@@ -552,7 +552,7 @@ static void glandagpu_pci_remove(struct pci_dev *pdev)
 
 static const struct pci_device_id glanda_pci_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_REDHAT_QUMRANET, PCI_DEVICE_ID_GLANDA_GPU) },
-	{ /* end of table */ }
+	{ }
 };
 
 MODULE_DEVICE_TABLE(pci, glanda_pci_ids);
