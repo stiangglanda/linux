@@ -420,8 +420,10 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 	}
 
 	ret = drm_dev_register(&gdev->drm, 0);
-	if (ret)
+	if (ret) {
+		writel(0, gdev->mmio_base + REG_IER);
 		return ret;
+	}
 
 	drm_info(&gdev->drm, "GlandaGPU DRM Initialized (/dev/dri/cardX created)\n");
 	return 0;
