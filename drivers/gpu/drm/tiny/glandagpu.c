@@ -415,7 +415,6 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 		}
 
 		writel(INT_VSYNC, gdev->mmio_base + REG_IER);
-		drm_info(&gdev->drm, "IRQ %d requested and enabled\n", gdev->irq);
 	} else {
 		drm_warn(&gdev->drm, "No IRQ found, falling back to polling\n");
 	}
@@ -426,7 +425,6 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 		return ret;
 	}
 
-	drm_info(&gdev->drm, "GlandaGPU DRM Initialized (/dev/dri/cardX created)\n");
 	return 0;
 }
 
@@ -438,8 +436,6 @@ static void glanda_drm_fini(struct glanda_device *gdev)
 
 	/* Disable interrupts */
 	writel(0, gdev->mmio_base + REG_IER);
-
-	drm_info(&gdev->drm, "GlandaGPU DRM Driver removed\n");
 }
 
 static int glandagpu_probe(struct platform_device *pdev)
@@ -447,8 +443,6 @@ static int glandagpu_probe(struct platform_device *pdev)
 	struct resource *res;
 	struct glanda_device *gdev;
 	int irq;
-
-	dev_info(&pdev->dev, "GlandaGPU Probe started\n");
 
 	gdev = devm_drm_dev_alloc(&pdev->dev, &glanda_drm_driver, struct glanda_device, drm);
 	if (IS_ERR(gdev))
@@ -512,8 +506,6 @@ static int glandagpu_pci_probe(struct pci_dev *pdev, const struct pci_device_id 
 {
 	struct glanda_device *gdev;
 	int ret;
-
-	dev_info(&pdev->dev, "GlandaGPU PCI Probe started\n");
 
 	ret = pcim_enable_device(pdev);
 	if (ret)
@@ -581,7 +573,6 @@ static int __init glandagpu_init(void)
 		return ret;
 	}
 
-	pr_info("GlandaGPU: Module loaded successfully\n");
 	return 0;
 }
 
@@ -589,7 +580,6 @@ static void __exit glandagpu_exit(void)
 {
 	pci_unregister_driver(&glandagpu_pci_driver);
 	platform_driver_unregister(&glandagpu_driver);
-	pr_info("GlandaGPU: Module unloaded\n");
 }
 
 module_init(glandagpu_init);
