@@ -235,17 +235,17 @@ static void glanda_crtc_atomic_disable(struct drm_crtc *crtc,
 static void glanda_crtc_atomic_flush(struct drm_crtc *crtc,
 				     struct drm_atomic_commit *state)
 {
+	struct glanda_device *gdev = to_glanda(crtc->dev);
 	struct drm_crtc_state *new_state = drm_atomic_get_new_crtc_state(state, crtc);
 	struct drm_pending_vblank_event *event;
 
 	if (new_state->event) {
 		event = new_state->event;
-
 		new_state->event = NULL;
 
 		spin_lock_irq(&crtc->dev->event_lock);
 
-		if (drm_crtc_vblank_get(crtc) == 0)
+		if (gdev->irq > 0 && drm_crtc_vblank_get(crtc) == 0)
 			drm_crtc_arm_vblank_event(crtc, event);
 		else
 			drm_crtc_send_vblank_event(crtc, event);
