@@ -1,25 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0
-/*
- * Terasic DE10-Standard (Cyclone V SoC 5CSXFC6D6)
- * Portiert von linux-socfpga socfpga-4.5 (sopc2dts-generiert) auf mainline v6.12.
- *
- * Basis: socfpga_cyclone5.dtsi (verifiziert gegen torvalds/linux v6.12)
- * Vorlage für Board-Overrides: socfpga_cyclone5_de0_nano_soc.dts (nächstliegendes
- * Referenzboard in mainline, da keine offizielle DE10-Standard-DTS existiert)
- *
- * WICHTIG: Diese Datei geht davon aus, dass Bitstream + HPS<->FPGA-Bridges
- * bereits VOR dem Linux-Boot (Preloader/U-Boot) programmiert bzw. enabled
- * wurden. Die fpga_bridge0-3 / fpgamgr0 / base_fpga_region Nodes aus
- * socfpga_cyclone5.dtsi werden deshalb NICHT angefasst - sie sind ohnehin nur
- * Enable/Reset-Register für den FPGA-Manager-Reprogrammier-Workflow, nicht die
- * tatsächlichen AXI-Adressfenster.
- *
- * TODO / bitte gegen eure Hardware verifizieren (siehe Kommentare unten):
- *  - GPIO-Bank-Zuordnung fuer LEDs (porta/portb/portc)
- *  - cd-gpios/vmmc-supply fuer mmc0, falls abweichend vom De0-Nano-Soc-Referenzdesign
- *  - IRQ-Nummer/Flags des GPU-Nodes (aus eurem sopc2dts-Dump uebernommen, sollte
- *    stabil sein, da reine GIC-SPI-Nummer aus eurem Qsys-Design)
- */
 
 #include "socfpga_cyclone5.dtsi"
 
@@ -90,7 +69,7 @@
 			 <0x1 0x35000   0xff235000 0x20>;
 
 		gpu@0 {
-			compatible = "glanda,gpu-1.0";
+			compatible = "kieweg,gpu-1.0";
 			reg = <0x0 0x0 0x1000000>;
 			interrupt-parent = <&intc>;
 			interrupts = <0 43 4>;	/* GIC SPI 43, level-high - aus eurem Dump: 0x2b = 43 */
