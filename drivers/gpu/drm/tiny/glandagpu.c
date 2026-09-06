@@ -86,7 +86,7 @@ struct glanda_device {
 	struct drm_connector connector;
 };
 
-#define to_glanda(dev) container_of(dev, struct glanda_device, drm)
+#define to_glanda(dev) container_of_const(dev, struct glanda_device, drm)
 
 static const u32 glanda_plane_formats[] = {
 	DRM_FORMAT_XRGB8888,
@@ -107,6 +107,12 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 
 	if (!drm_dev_enter(plane->dev, &idx))
 		return;
+
+	if (!fb) {
+		memset_io(gdev->vram_base, 0, GLANDA_VRAM_SIZE);
+		drm_dev_exit(idx);
+		return;
+	}
 
 	src_pitch = fb->pitches[0];
 	width = min_t(u32, fb->width, GLANDA_WIDTH);
