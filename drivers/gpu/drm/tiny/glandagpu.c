@@ -95,11 +95,14 @@ static const u32 glanda_plane_formats[] = {
 static void glanda_plane_atomic_update(struct drm_plane *plane,
 				       struct drm_atomic_commit *state)
 {
+	struct drm_plane_state *old_state = drm_atomic_get_old_plane_state(state, plane);
 	struct drm_plane_state *new_state = drm_atomic_get_new_plane_state(state, plane);
 	struct drm_shadow_plane_state *shadow_state = to_drm_shadow_plane_state(new_state);
 	struct drm_framebuffer *fb = new_state->fb;
 	struct glanda_device *gdev = to_glanda(plane->dev);
-	u32 src_pitch, width, height, x, y;
+	struct drm_atomic_helper_damage_iter iter;
+	struct drm_rect damage;
+	u32 src_pitch;
 	int idx;
 
 	if (!fb)
@@ -115,24 +118,29 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 	}
 
 	src_pitch = fb->pitches[0];
-	width = min_t(u32, fb->width, GLANDA_WIDTH);
-	height = min_t(u32, fb->height, GLANDA_HEIGHT);
 
 	drm_gem_fb_begin_cpu_access(fb, DMA_FROM_DEVICE);
 
-	for (y = 0; y < height; y++) {
-		size_t offset = y * GLANDA_WIDTH * sizeof(u32);
-		u32 __iomem *dst = (u32 __iomem *)(gdev->vram_base + offset);
+	drm_atomic_helper_damage_iter_init(&iter, old_state, new_state);
+	drm_atomic_for_each_plane_damage(&iter, &damage) {
+		u32 width = min3((u32)damage.x2, fb->width, (u32)GLANDA_WIDTH);
+		u32 height = min3((u32)damage.y2, fb->height, (u32)GLANDA_HEIGHT);
+		u32 x, y;
+		
+		for (y = damage.y1; y < height; y++) {
+			size_t offset = y * GLANDA_WIDTH * sizeof(u32);
+			u32 __iomem *dst = (u32 __iomem *)(gdev->vram_base + offset);
 
-		for (x = 0; x < width; x++) {
-			u32 pixel = iosys_map_rd(&shadow_state->data[0],
-						 y * src_pitch + x * sizeof(u32), u32);
-			pixel = le32_to_cpu((__force __le32)pixel);
-			u32 packed = ((pixel >> 12) & 0x0F00) |
-				((pixel >> 8) & 0x00F0) |
-				((pixel >> 4) & 0x000F);
+			for (x = damage.x1; x < width; x++) {
+				u32 pixel = iosys_map_rd(&shadow_state->data[0],
+							y * src_pitch + x * sizeof(u32), u32);
+				pixel = le32_to_cpu((__force __le32)pixel);
+				u32 packed = ((pixel >> 12) & 0x0F00) |
+					((pixel >> 8) & 0x00F0) |
+					((pixel >> 4) & 0x000F);
 
-			writel_relaxed(packed, &dst[x]);
+				writel_relaxed(packed, &dst[x]);
+			}
 		}
 	}
 
