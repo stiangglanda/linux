@@ -118,6 +118,8 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 	width = min_t(u32, fb->width, GLANDA_WIDTH);
 	height = min_t(u32, fb->height, GLANDA_HEIGHT);
 
+	drm_gem_fb_begin_cpu_access(fb, DMA_FROM_DEVICE);
+
 	for (y = 0; y < height; y++) {
 		size_t offset = y * GLANDA_WIDTH * sizeof(u32);
 		u32 __iomem *dst = (u32 __iomem *)(gdev->vram_base + offset);
@@ -134,6 +136,7 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 		}
 	}
 
+	drm_gem_fb_end_cpu_access(fb, DMA_FROM_DEVICE);
 	drm_dev_exit(idx);
 }
 
