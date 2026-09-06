@@ -668,8 +668,6 @@ patternProperties:
     description: Giantplus Technology Co., Ltd.
   "^gira,.*":
     description: Gira Giersiepen GmbH & Co. KG
-  "^kieweg,.*":
-    description: Leander Kieweg
   "^glinet,.*":
     description: GL Intelligence, Inc.
   "^globalscale,.*":
@@ -897,6 +895,8 @@ patternProperties:
     description: Khadas
   "^kiebackpeter,.*":
     description: Kieback & Peter GmbH
+  "^kieweg,.*":
+    description: Leander Kieweg
   "^kinetic,.*":
     description: Kinetic Technologies
   "^kingdisplay,.*":
