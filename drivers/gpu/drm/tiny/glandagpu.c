@@ -204,6 +204,9 @@ static int glanda_crtc_enable_vblank(struct drm_crtc *crtc)
 	struct glanda_device *gdev = to_glanda(crtc->dev);
 	u32 ier;
 
+	if (gdev->irq <= 0)
+		return -EINVAL;
+
 	ier = readl(gdev->mmio_base + REG_IER);
 	writel(ier | INT_VSYNC, gdev->mmio_base + REG_IER);
 
