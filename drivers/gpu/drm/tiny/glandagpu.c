@@ -500,6 +500,7 @@ static struct platform_driver glandagpu_driver = {
 };
 
 /* PCI probe path for the QEMU test device, real hardware uses platform_driver */
+#ifdef CONFIG_PCI
 static int glandagpu_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
 	struct glanda_device *gdev;
@@ -553,6 +554,7 @@ static struct pci_driver glandagpu_pci_driver = {
 	.probe = glandagpu_pci_probe,
 	.remove = glandagpu_pci_remove,
 };
+#endif /* CONFIG_PCI */
 
 static int __init glandagpu_init(void)
 {
@@ -564,19 +566,23 @@ static int __init glandagpu_init(void)
 		return ret;
 	}
 
+#ifdef CONFIG_PCI
 	ret = pci_register_driver(&glandagpu_pci_driver);
 	if (ret) {
 		pr_err("GlandaGPU: Failed to register PCI driver\n");
 		platform_driver_unregister(&glandagpu_driver);
 		return ret;
 	}
+#endif
 
 	return 0;
 }
 
 static void __exit glandagpu_exit(void)
 {
+#ifdef CONFIG_PCI
 	pci_unregister_driver(&glandagpu_pci_driver);
+#endif
 	platform_driver_unregister(&glandagpu_driver);
 }
 
