@@ -102,40 +102,60 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 	struct glanda_device *gdev = to_glanda(plane->dev);
 	struct drm_atomic_helper_damage_iter iter;
 	struct drm_rect damage;
+	struct drm_rect vram_clip = { .x1 = 0, .y1 = 0,
+				      .x2 = GLANDA_WIDTH, .y2 = GLANDA_HEIGHT };
 	u32 src_pitch;
-	int idx;
-
-	if (!fb)
-		return;
-
-	if (!drm_dev_enter(plane->dev, &idx))
-		return;
+	s32 dst_off_x, dst_off_y;
+	int idx, ret;
 
 	if (!fb) {
+		if (!drm_dev_enter(plane->dev, &idx))
+			return;
 		memset_io(gdev->vram_base, 0, GLANDA_VRAM_SIZE);
 		drm_dev_exit(idx);
 		return;
 	}
 
+	ret = drm_gem_fb_begin_cpu_access(fb, DMA_FROM_DEVICE);
+	if (ret)
+		return;
+
+	if (!drm_dev_enter(plane->dev, &idx))
+		goto out_drm_gem_fb_end_cpu_access;
+
 	src_pitch = fb->pitches[0];
 
-	drm_gem_fb_begin_cpu_access(fb, DMA_FROM_DEVICE);
+	dst_off_x = new_state->dst.x1 - (new_state->src.x1 >> 16);
+	dst_off_y = new_state->dst.y1 - (new_state->src.y1 >> 16);
 
 	drm_atomic_helper_damage_iter_init(&iter, old_state, new_state);
 	drm_atomic_for_each_plane_damage(&iter, &damage) {
-		u32 width = min3((u32)damage.x2, fb->width, (u32)GLANDA_WIDTH);
-		u32 height = min3((u32)damage.y2, fb->height, (u32)GLANDA_HEIGHT);
+		struct drm_rect dst_clip = vram_clip;
+		struct drm_rect fb_clip = { .x1 = 0, .y1 = 0,
+					    .x2 = fb->width, .y2 = fb->height };
 		u32 x, y;
-		
-		for (y = damage.y1; y < height; y++) {
-			size_t offset = y * GLANDA_WIDTH * sizeof(u32);
-			u32 __iomem *dst = (u32 __iomem *)(gdev->vram_base + offset);
 
-			for (x = damage.x1; x < width; x++) {
-				u32 pixel = iosys_map_rd(&shadow_state->data[0],
-							y * src_pitch + x * sizeof(u32), u32);
+		if (!drm_rect_intersect(&damage, &fb_clip))
+			continue;
+
+		drm_rect_translate(&damage, dst_off_x, dst_off_y);
+
+		if (!drm_rect_intersect(&dst_clip, &damage))
+			continue;
+
+		for (y = dst_clip.y1; y < dst_clip.y2; y++) {
+			u32 __iomem *dst = (u32 __iomem *)(gdev->vram_base +
+					    (size_t)y * GLANDA_WIDTH * sizeof(u32));
+			u32 src_y = y - dst_off_y;
+
+			for (x = dst_clip.x1; x < dst_clip.x2; x++) {
+				u32 src_x = x - dst_off_x;
+				u32 pixel, packed;
+
+				pixel = iosys_map_rd(&shadow_state->data[0],
+						     src_y * src_pitch + src_x * sizeof(u32), u32);
 				pixel = le32_to_cpu((__force __le32)pixel);
-				u32 packed = ((pixel >> 12) & 0x0F00) |
+				packed = ((pixel >> 12) & 0x0F00) |
 					((pixel >> 8) & 0x00F0) |
 					((pixel >> 4) & 0x000F);
 
@@ -144,8 +164,9 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 		}
 	}
 
-	drm_gem_fb_end_cpu_access(fb, DMA_FROM_DEVICE);
 	drm_dev_exit(idx);
+out_drm_gem_fb_end_cpu_access:
+	drm_gem_fb_end_cpu_access(fb, DMA_FROM_DEVICE);
 }
 
 static int glanda_plane_atomic_check(struct drm_plane *plane,
