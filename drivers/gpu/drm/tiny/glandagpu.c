@@ -564,8 +564,11 @@ static int glandagpu_pci_probe(struct pci_dev *pdev, const struct pci_device_id 
 	pci_set_drvdata(pdev, gdev);
 
 	gdev->mmio_base = pcim_iomap_table(pdev)[0];
-	gdev->vram_base = pcim_iomap_table(pdev)[1];
 	gdev->vram_phys = pci_resource_start(pdev, 1);
+	
+	gdev->vram_base = devm_ioremap_wc(&pdev->dev, gdev->vram_phys, GLANDA_VRAM_SIZE);
+	if (!gdev->vram_base)
+		return -ENOMEM;
 
 	return glanda_drm_init(gdev, pdev->irq);
 }
