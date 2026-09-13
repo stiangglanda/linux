@@ -94,11 +94,11 @@ static const u32 glanda_plane_formats[] = {
 };
 
 static void glanda_blit_rect(struct glanda_device *gdev,
-	const struct drm_rect *dst_clip,
-	const struct iosys_map *src,
-	struct drm_framebuffer *fb,
-	const struct drm_rect *src_clip,
-	unsigned int src_x, unsigned int src_y)
+			     const struct drm_rect *dst_clip,
+				 const struct iosys_map *src,
+				 struct drm_framebuffer *fb,
+				 const struct drm_rect *src_clip,
+				 unsigned int src_x, unsigned int src_y)
 {
 	unsigned int src_pitch = fb->pitches[0];
 	unsigned int width = min(drm_rect_width(src_clip), drm_rect_width(dst_clip));
@@ -157,7 +157,7 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 			continue;
 
 		glanda_blit_rect(gdev, &dst_clip, &shadow_state->data[0], fb,
-				&damage, src_x, src_y);
+				 &damage, src_x, src_y);
 	}
 
 	drm_dev_exit(idx);
@@ -166,7 +166,7 @@ out_drm_gem_fb_end_cpu_access:
 }
 
 static void glanda_plane_atomic_disable(struct drm_plane *plane,
-						struct drm_atomic_commit *state)
+					struct drm_atomic_commit *state)
 {
 	struct drm_device *dev = plane->dev;
 	struct glanda_device *gdev = to_glanda(dev);
@@ -190,7 +190,7 @@ static int glanda_plane_atomic_check(struct drm_plane *plane,
 		new_crtc_state = drm_atomic_get_new_crtc_state(state, new_plane_state->crtc);
 
 	ret = drm_atomic_helper_check_plane_state(new_plane_state, new_crtc_state,
-		DRM_PLANE_NO_SCALING, DRM_PLANE_NO_SCALING,
+						  DRM_PLANE_NO_SCALING, DRM_PLANE_NO_SCALING,
 		false,	/* can_position */
 		false); /* can_update_disabled */
 	if (ret)
@@ -498,7 +498,7 @@ static int glandagpu_probe(struct platform_device *pdev)
 	gdev->vram_phys = res->start;
 	gdev->vram_base = devm_ioremap_wc(&pdev->dev, res->start, GLANDA_VRAM_SIZE);
 	gdev->mmio_base = devm_ioremap(&pdev->dev, res->start + GLANDA_MMIO_OFFSET,
-					   GLANDA_MMIO_SIZE);
+				       GLANDA_MMIO_SIZE);
 	if (!gdev->vram_base || !gdev->mmio_base) {
 		drm_err(&gdev->drm, "failed to ioremap\n");
 		return -ENOMEM;
@@ -548,7 +548,7 @@ static int glandagpu_pci_probe(struct pci_dev *pdev, const struct pci_device_id 
 	pci_set_master(pdev);
 
 	if (pci_resource_len(pdev, 0) < GLANDA_MMIO_SIZE ||
-    	pci_resource_len(pdev, 1) < GLANDA_VRAM_SIZE) {
+	    pci_resource_len(pdev, 1) < GLANDA_VRAM_SIZE) {
 		dev_err(&pdev->dev, "BAR too small: BAR0=%llu (need %u), BAR1=%llu (need %u)\n",
 			(unsigned long long)pci_resource_len(pdev, 0), GLANDA_MMIO_SIZE,
 			(unsigned long long)pci_resource_len(pdev, 1), GLANDA_VRAM_SIZE);
