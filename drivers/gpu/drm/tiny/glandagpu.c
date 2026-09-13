@@ -390,8 +390,8 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 
 	gdev->drm.mode_config.min_width = 640;
 	gdev->drm.mode_config.min_height = 480;
-	gdev->drm.mode_config.max_width = 640;
-	gdev->drm.mode_config.max_height = 480;
+	gdev->drm.mode_config.max_width = DRM_SHADOW_PLANE_MAX_WIDTH;
+	gdev->drm.mode_config.max_height = DRM_SHADOW_PLANE_MAX_HEIGHT;
 	gdev->drm.mode_config.funcs = &glanda_mode_config_funcs;
 
 	ret = drm_universal_plane_init(&gdev->drm, &gdev->primary_plane, 1 << 0,
@@ -404,6 +404,8 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 		return ret;
 	}
 	drm_plane_helper_add(&gdev->primary_plane, &glanda_plane_helper_funcs);
+
+	drm_plane_enable_fb_damage_clips(&gdev->primary_plane);
 
 	/* VBlank init */
 	ret = drm_vblank_init(&gdev->drm, 1);
