@@ -407,13 +407,6 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 
 	drm_plane_enable_fb_damage_clips(&gdev->primary_plane);
 
-	/* VBlank init */
-	ret = drm_vblank_init(&gdev->drm, 1);
-	if (ret) {
-		drm_err(&gdev->drm, "Failed to initialize vblank\n");
-		return ret;
-	}
-
 	/* CRTC init */
 	ret = drm_crtc_init_with_planes(&gdev->drm, &gdev->crtc,
 					&gdev->primary_plane, NULL,
@@ -442,10 +435,12 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 
 	drm_connector_attach_encoder(&gdev->connector, &gdev->encoder);
 
-	/* Populate connector state early so userspace can enumerate modes. */
-	mutex_lock(&gdev->drm.mode_config.mutex);
-	drm_helper_probe_single_connector_modes(&gdev->connector, 1024, 768);
-	mutex_unlock(&gdev->drm.mode_config.mutex);
+	/* VBlank init */
+	ret = drm_vblank_init(&gdev->drm, 1);
+	if (ret) {
+		drm_err(&gdev->drm, "Failed to initialize vblank\n");
+		return ret;
+	}
 
 	drm_mode_config_reset(&gdev->drm);
 
@@ -463,10 +458,8 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 	}
 
 	ret = drm_dev_register(&gdev->drm, 0);
-	if (ret) {
-		writel(0, gdev->mmio_base + REG_IER);
+	if (ret)
 		return ret;
-	}
 
 	return 0;
 }
