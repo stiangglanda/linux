@@ -242,12 +242,6 @@ static int glanda_connector_get_modes(struct drm_connector *connector)
 	return 1;
 }
 
-static enum drm_connector_status glanda_connector_detect(struct drm_connector
-							 *connector, bool force)
-{
-	return connector_status_connected;
-}
-
 static int glanda_crtc_enable_vblank(struct drm_crtc *crtc)
 {
 	struct glanda_device *gdev = to_glanda(crtc->dev);
@@ -332,7 +326,6 @@ static const struct drm_encoder_funcs glanda_encoder_funcs = {
 static const struct drm_connector_funcs glanda_connector_funcs = {
 	.fill_modes = drm_helper_probe_single_connector_modes,
 	.destroy = drm_connector_cleanup,
-	.detect = glanda_connector_detect,
 	.reset = drm_atomic_helper_connector_reset,
 	.atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,
 	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
