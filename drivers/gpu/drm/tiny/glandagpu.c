@@ -92,6 +92,38 @@ static const u32 glanda_plane_formats[] = {
 	DRM_FORMAT_XRGB8888,
 };
 
+static void glanda_blit_rect(struct glanda_device *gdev,
+	const struct drm_rect *dst_clip,
+	const struct iosys_map *src,
+	struct drm_framebuffer *fb,
+	const struct drm_rect *src_clip)
+{
+	unsigned int src_pitch = fb->pitches[0];
+	unsigned int width = min(drm_rect_width(src_clip), drm_rect_width(dst_clip));
+	unsigned int height = min(drm_rect_height(src_clip), drm_rect_height(dst_clip));
+	unsigned int x, y;
+
+	for (y = 0; y < height; y++) {
+		u32 __iomem *dst = (u32 __iomem *)gdev->vram_base +
+			(size_t)(dst_clip->y1 + y) * GLANDA_WIDTH + dst_clip->x1;
+
+		size_t src_off = (size_t)(src_clip->y1 + y) * src_pitch +
+			src_clip->x1 * sizeof(u32);
+  
+		for (x = 0; x < width; x++) {  
+			u32 pixel = iosys_map_rd(src, src_off + x * sizeof(u32), u32);
+			u32 packed;
+
+			pixel = le32_to_cpu((__force __le32)pixel);
+			packed = ((pixel >> 12) & 0x0F00) |
+			((pixel >> 8) & 0x00F0) |
+			((pixel >> 4) & 0x000F);
+
+			writel_relaxed(packed, &dst[x]);
+		}
+	}
+}
+
 static void glanda_plane_atomic_update(struct drm_plane *plane,
 				       struct drm_atomic_commit *state)
 {
@@ -102,19 +134,7 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 	struct glanda_device *gdev = to_glanda(plane->dev);
 	struct drm_atomic_helper_damage_iter iter;
 	struct drm_rect damage;
-	struct drm_rect vram_clip = { .x1 = 0, .y1 = 0,
-				      .x2 = GLANDA_WIDTH, .y2 = GLANDA_HEIGHT };
-	u32 src_pitch;
-	s32 dst_off_x, dst_off_y;
-	int idx, ret;
-
-	if (!fb) {
-		if (!drm_dev_enter(plane->dev, &idx))
-			return;
-		memset_io(gdev->vram_base, 0, GLANDA_VRAM_SIZE);
-		drm_dev_exit(idx);
-		return;
-	}
+	int ret, idx;
 
 	ret = drm_gem_fb_begin_cpu_access(fb, DMA_FROM_DEVICE);
 	if (ret)
@@ -123,45 +143,14 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 	if (!drm_dev_enter(plane->dev, &idx))
 		goto out_drm_gem_fb_end_cpu_access;
 
-	src_pitch = fb->pitches[0];
-
-	dst_off_x = new_state->dst.x1 - (new_state->src.x1 >> 16);
-	dst_off_y = new_state->dst.y1 - (new_state->src.y1 >> 16);
-
 	drm_atomic_helper_damage_iter_init(&iter, old_state, new_state);
 	drm_atomic_for_each_plane_damage(&iter, &damage) {
-		struct drm_rect dst_clip = vram_clip;
-		struct drm_rect fb_clip = { .x1 = 0, .y1 = 0,
-					    .x2 = fb->width, .y2 = fb->height };
-		u32 x, y;
-
-		if (!drm_rect_intersect(&damage, &fb_clip))
-			continue;
-
-		drm_rect_translate(&damage, dst_off_x, dst_off_y);
+		struct drm_rect dst_clip = new_state->dst;
 
 		if (!drm_rect_intersect(&dst_clip, &damage))
 			continue;
 
-		for (y = dst_clip.y1; y < dst_clip.y2; y++) {
-			u32 __iomem *dst = (u32 __iomem *)(gdev->vram_base +
-					    (size_t)y * GLANDA_WIDTH * sizeof(u32));
-			u32 src_y = y - dst_off_y;
-
-			for (x = dst_clip.x1; x < dst_clip.x2; x++) {
-				u32 src_x = x - dst_off_x;
-				u32 pixel, packed;
-
-				pixel = iosys_map_rd(&shadow_state->data[0],
-						     src_y * src_pitch + src_x * sizeof(u32), u32);
-				pixel = le32_to_cpu((__force __le32)pixel);
-				packed = ((pixel >> 12) & 0x0F00) |
-					((pixel >> 8) & 0x00F0) |
-					((pixel >> 4) & 0x000F);
-
-				writel_relaxed(packed, &dst[x]);
-			}
-		}
+		glanda_blit_rect(gdev, &dst_clip, &shadow_state->data[0], fb, &damage);
 	}
 
 	drm_dev_exit(idx);
@@ -169,18 +158,30 @@ out_drm_gem_fb_end_cpu_access:
 	drm_gem_fb_end_cpu_access(fb, DMA_FROM_DEVICE);
 }
 
+static void glanda_plane_atomic_disable(struct drm_plane *plane,
+						struct drm_atomic_commit *state)
+{
+	struct drm_device *dev = plane->dev;
+	struct glanda_device *gdev = to_glanda(dev);
+	int idx;
+
+	if (!drm_dev_enter(dev, &idx))
+		return;
+
+	memset_io(gdev->vram_base, 0, GLANDA_WIDTH * sizeof(u32) * GLANDA_HEIGHT);
+	drm_dev_exit(idx);
+}
+
 static int glanda_plane_atomic_check(struct drm_plane *plane,
 				     struct drm_atomic_commit *state)
 {
 	struct drm_plane_state *new_plane_state = drm_atomic_get_new_plane_state(state, plane);
-	struct drm_crtc_state *crtc_state;
+	struct drm_crtc_state *new_crtc_state = NULL;
 
-	if (!new_plane_state->crtc)
-		return 0;
+	if (new_plane_state->crtc)
+		new_crtc_state = drm_atomic_get_new_crtc_state(state, new_plane_state->crtc);
 
-	crtc_state = drm_atomic_get_new_crtc_state(state, new_plane_state->crtc);
-
-	return drm_atomic_helper_check_plane_state(new_plane_state, crtc_state,
+	return drm_atomic_helper_check_plane_state(new_plane_state, new_crtc_state,
 		DRM_PLANE_NO_SCALING, DRM_PLANE_NO_SCALING,
 		false,	/* can_position */
 		false	/* can_update_disabled */);
@@ -190,6 +191,7 @@ static const struct drm_plane_helper_funcs glanda_plane_helper_funcs = {
 	DRM_GEM_SHADOW_PLANE_HELPER_FUNCS,
 	.atomic_update = glanda_plane_atomic_update,
 	.atomic_check = glanda_plane_atomic_check,
+	.atomic_disable = glanda_plane_atomic_disable,
 };
 
 static const struct drm_plane_funcs glanda_plane_funcs = {
