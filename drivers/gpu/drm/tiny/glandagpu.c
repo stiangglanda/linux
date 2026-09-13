@@ -94,22 +94,23 @@ static const u32 glanda_plane_formats[] = {
 };
 
 static void glanda_blit_rect(struct glanda_device *gdev,
-			     const struct drm_rect *clip,
-				 const struct iosys_map *src,
-				 struct drm_framebuffer *fb,
-				 unsigned int src_x, unsigned int src_y)
+			     const struct drm_rect *dst_clip,
+			     const struct iosys_map *src,
+			     struct drm_framebuffer *fb,
+			     int dst_off_x, int dst_off_y)
 {
 	unsigned int src_pitch = fb->pitches[0];
-	unsigned int width = drm_rect_width(clip);
-	unsigned int height = drm_rect_height(clip);
+	unsigned int width = drm_rect_width(dst_clip);
+	unsigned int height = drm_rect_height(dst_clip);
 	unsigned int x, y;
 
 	for (y = 0; y < height; y++) {
+		unsigned int dst_y = dst_clip->y1 + y;
+		unsigned int src_y = dst_y - dst_off_y;
 		u32 __iomem *dst = (u32 __iomem *)gdev->vram_base +
-			(size_t)(clip->y1 + y) * GLANDA_WIDTH + clip->x1;
-
-		size_t src_off = (size_t)(src_y + clip->y1 + y) * src_pitch +
-			(size_t)(src_x + clip->x1) * sizeof(u32);
+				   (size_t)dst_y * GLANDA_WIDTH + dst_clip->x1;
+		size_t src_off = (size_t)src_y * src_pitch +
+				 (size_t)(dst_clip->x1 - dst_off_x) * sizeof(u32);
 
 		for (x = 0; x < width; x++) {
 			u32 pixel = iosys_map_rd(src, src_off + x * sizeof(u32), u32);
@@ -131,12 +132,13 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 	struct drm_plane_state *old_state = drm_atomic_get_old_plane_state(state, plane);
 	struct drm_plane_state *new_state = drm_atomic_get_new_plane_state(state, plane);
 	struct drm_shadow_plane_state *shadow_state = to_drm_shadow_plane_state(new_state);
-	struct drm_framebuffer *fb = new_state->fb;
+	struct drm_rect vram_clip = DRM_RECT_INIT(0, 0, GLANDA_WIDTH, GLANDA_HEIGHT);
 	struct glanda_device *gdev = to_glanda(plane->dev);
+	struct drm_framebuffer *fb = new_state->fb;
 	struct drm_atomic_helper_damage_iter iter;
 	struct drm_rect damage;
+	int dst_off_x, dst_off_y;
 	int ret, idx;
-	unsigned int src_x, src_y;
 
 	ret = drm_gem_fb_begin_cpu_access(fb, DMA_FROM_DEVICE);
 	if (ret)
@@ -145,17 +147,22 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 	if (!drm_dev_enter(plane->dev, &idx))
 		goto out_drm_gem_fb_end_cpu_access;
 
-	src_x = new_state->src.x1 >> 16;
-	src_y = new_state->src.y1 >> 16;
+	dst_off_x = new_state->dst.x1 - (new_state->src.x1 >> 16);
+	dst_off_y = new_state->dst.y1 - (new_state->src.y1 >> 16);
 
 	drm_atomic_helper_damage_iter_init(&iter, old_state, new_state);
 	drm_atomic_for_each_plane_damage(&iter, &damage) {
 		struct drm_rect dst_clip = new_state->dst;
 
+		drm_rect_translate(&damage, dst_off_x, dst_off_y);
+
 		if (!drm_rect_intersect(&dst_clip, &damage))
 			continue;
+		if (!drm_rect_intersect(&dst_clip, &vram_clip))
+			continue;
 
-		glanda_blit_rect(gdev, &dst_clip, &shadow_state->data[0], fb, src_x, src_y);
+		glanda_blit_rect(gdev, &dst_clip, &shadow_state->data[0], fb,
+				 dst_off_x, dst_off_y);
 	}
 
 	drm_dev_exit(idx);
@@ -553,7 +560,11 @@ static int glandagpu_pci_probe(struct pci_dev *pdev, const struct pci_device_id 
 		return -EINVAL;
 	}
 
-	ret = pcim_iomap_regions(pdev, BIT(0) | BIT(1), "glandagpu");
+	ret = pcim_iomap_regions(pdev, BIT(0), "glandagpu");
+	if (ret)
+		return ret;
+
+	ret = pcim_request_region(pdev, 1, "glandagpu");
 	if (ret)
 		return ret;
 
