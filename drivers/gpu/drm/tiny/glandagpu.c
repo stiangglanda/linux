@@ -97,7 +97,8 @@ static void glanda_blit_rect(struct glanda_device *gdev,
 	const struct drm_rect *dst_clip,
 	const struct iosys_map *src,
 	struct drm_framebuffer *fb,
-	const struct drm_rect *src_clip)
+	const struct drm_rect *src_clip,
+	unsigned int src_x, unsigned int src_y)
 {
 	unsigned int src_pitch = fb->pitches[0];
 	unsigned int width = min(drm_rect_width(src_clip), drm_rect_width(dst_clip));
@@ -108,17 +109,17 @@ static void glanda_blit_rect(struct glanda_device *gdev,
 		u32 __iomem *dst = (u32 __iomem *)gdev->vram_base +
 			(size_t)(dst_clip->y1 + y) * GLANDA_WIDTH + dst_clip->x1;
 
-		size_t src_off = (size_t)(src_clip->y1 + y) * src_pitch +
-			src_clip->x1 * sizeof(u32);
-  
-		for (x = 0; x < width; x++) {  
+		size_t src_off = (size_t)(src_y + src_clip->y1 + y) * src_pitch +
+			(size_t)(src_x + src_clip->x1) * sizeof(u32);
+
+		for (x = 0; x < width; x++) {
 			u32 pixel = iosys_map_rd(src, src_off + x * sizeof(u32), u32);
 			u32 packed;
 
 			pixel = le32_to_cpu((__force __le32)pixel);
 			packed = ((pixel >> 12) & 0x0F00) |
-			((pixel >> 8) & 0x00F0) |
-			((pixel >> 4) & 0x000F);
+				((pixel >> 8) & 0x00F0) |
+				((pixel >> 4) & 0x000F);
 
 			writel_relaxed(packed, &dst[x]);
 		}
@@ -136,6 +137,7 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 	struct drm_atomic_helper_damage_iter iter;
 	struct drm_rect damage;
 	int ret, idx;
+	unsigned int src_x, src_y;
 
 	ret = drm_gem_fb_begin_cpu_access(fb, DMA_FROM_DEVICE);
 	if (ret)
@@ -144,6 +146,9 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 	if (!drm_dev_enter(plane->dev, &idx))
 		goto out_drm_gem_fb_end_cpu_access;
 
+	src_x = new_state->src.x1 >> 16;
+	src_y = new_state->src.y1 >> 16;
+
 	drm_atomic_helper_damage_iter_init(&iter, old_state, new_state);
 	drm_atomic_for_each_plane_damage(&iter, &damage) {
 		struct drm_rect dst_clip = new_state->dst;
@@ -151,7 +156,8 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 		if (!drm_rect_intersect(&dst_clip, &damage))
 			continue;
 
-		glanda_blit_rect(gdev, &dst_clip, &shadow_state->data[0], fb, &damage);
+		glanda_blit_rect(gdev, &dst_clip, &shadow_state->data[0], fb,
+				&damage, src_x, src_y);
 	}
 
 	drm_dev_exit(idx);
@@ -189,10 +195,6 @@ static int glanda_plane_atomic_check(struct drm_plane *plane,
 		false); /* can_update_disabled */
 	if (ret)
 		return ret;
-
-	/* VRAM only holds GLANDA_WIDTH x GLANDA_HEIGHT, nothing to pan into. */
-	if (new_plane_state->src.x1 || new_plane_state->src.y1)
-		return -EINVAL;
 
 	return 0;
 }
@@ -565,7 +567,7 @@ static int glandagpu_pci_probe(struct pci_dev *pdev, const struct pci_device_id 
 
 	gdev->mmio_base = pcim_iomap_table(pdev)[0];
 	gdev->vram_phys = pci_resource_start(pdev, 1);
-	
+
 	gdev->vram_base = devm_ioremap_wc(&pdev->dev, gdev->vram_phys, GLANDA_VRAM_SIZE);
 	if (!gdev->vram_base)
 		return -ENOMEM;
