@@ -494,7 +494,7 @@ static int glandagpu_probe(struct platform_device *pdev)
 	}
 
 	gdev->vram_phys = res->start;
-	gdev->vram_base = devm_ioremap(&pdev->dev, res->start, GLANDA_VRAM_SIZE);
+	gdev->vram_base = devm_ioremap_wc(&pdev->dev, res->start, GLANDA_VRAM_SIZE);
 	gdev->mmio_base = devm_ioremap(&pdev->dev, res->start + GLANDA_MMIO_OFFSET,
 					   GLANDA_MMIO_SIZE);
 	if (!gdev->vram_base || !gdev->mmio_base) {
