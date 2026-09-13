@@ -177,14 +177,23 @@ static int glanda_plane_atomic_check(struct drm_plane *plane,
 {
 	struct drm_plane_state *new_plane_state = drm_atomic_get_new_plane_state(state, plane);
 	struct drm_crtc_state *new_crtc_state = NULL;
+	int ret;
 
 	if (new_plane_state->crtc)
 		new_crtc_state = drm_atomic_get_new_crtc_state(state, new_plane_state->crtc);
 
-	return drm_atomic_helper_check_plane_state(new_plane_state, new_crtc_state,
+	ret = drm_atomic_helper_check_plane_state(new_plane_state, new_crtc_state,
 		DRM_PLANE_NO_SCALING, DRM_PLANE_NO_SCALING,
 		false,	/* can_position */
-		false	/* can_update_disabled */);
+		false); /* can_update_disabled */
+	if (ret)
+		return ret;
+
+	/* VRAM only holds GLANDA_WIDTH x GLANDA_HEIGHT, nothing to pan into. */
+	if (new_plane_state->src.x1 || new_plane_state->src.y1)
+		return -EINVAL;
+
+	return 0;
 }
 
 static const struct drm_plane_helper_funcs glanda_plane_helper_funcs = {
