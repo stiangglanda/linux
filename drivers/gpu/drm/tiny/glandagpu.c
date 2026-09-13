@@ -24,6 +24,7 @@
 #include <drm/drm_gem_atomic_helper.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_vblank.h>
+#include <drm/drm_vblank_helper.h>
 
 #include <drm/drm_connector.h>
 #include <drm/drm_encoder.h>
@@ -246,34 +247,34 @@ static int glanda_crtc_enable_vblank(struct drm_crtc *crtc)
 {
 	struct glanda_device *gdev = to_glanda(crtc->dev);
 	u32 ier;
+	int idx;
 
 	if (gdev->irq <= 0)
 		return -EINVAL;
 
+	if (!drm_dev_enter(crtc->dev, &idx))
+		return -ENODEV;
+
 	ier = readl(gdev->mmio_base + REG_IER);
 	writel(ier | INT_VSYNC, gdev->mmio_base + REG_IER);
 
+	drm_dev_exit(idx);
 	return 0;
 }
 
 static void glanda_crtc_disable_vblank(struct drm_crtc *crtc)
 {
 	struct glanda_device *gdev = to_glanda(crtc->dev);
-	u32 ier = readl(gdev->mmio_base + REG_IER);
+	u32 ier;
+	int idx;
 
+	if (!drm_dev_enter(crtc->dev, &idx))
+		return;
+
+	ier = readl(gdev->mmio_base + REG_IER);
 	writel(ier & ~INT_VSYNC, gdev->mmio_base + REG_IER);
-}
 
-static void glanda_crtc_atomic_enable(struct drm_crtc *crtc,
-				      struct drm_atomic_commit *state)
-{
-	drm_crtc_vblank_on(crtc);
-}
-
-static void glanda_crtc_atomic_disable(struct drm_crtc *crtc,
-				       struct drm_atomic_commit *state)
-{
-	drm_crtc_vblank_off(crtc);
+	drm_dev_exit(idx);
 }
 
 static void glanda_crtc_atomic_flush(struct drm_crtc *crtc,
@@ -310,8 +311,8 @@ static const struct drm_crtc_funcs glanda_crtc_funcs = {
 };
 
 static const struct drm_crtc_helper_funcs glanda_crtc_helper_funcs = {
-	.atomic_enable = glanda_crtc_atomic_enable,
-	.atomic_disable = glanda_crtc_atomic_disable,
+	.atomic_enable = drm_crtc_vblank_atomic_enable,
+	.atomic_disable = drm_crtc_vblank_atomic_disable,
 	.atomic_flush = glanda_crtc_atomic_flush,
 };
 
@@ -343,7 +344,7 @@ static const struct drm_driver glanda_drm_driver = {
 	.driver_features =
 	    DRIVER_GEM | DRIVER_MODESET | DRIVER_ATOMIC,
 	.name = "glandagpu",
-	.desc = "GlandaGPU Hardware Accelerated DRM Driver",
+	.desc = "GlandaGPU DRM Driver",
 	.major = 1,
 	.minor = 0,
 	.fops = &glanda_drm_fops,
