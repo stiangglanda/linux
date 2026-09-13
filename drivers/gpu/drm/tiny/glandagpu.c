@@ -384,7 +384,7 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 	writel(0xFFFFFFFF, gdev->mmio_base + REG_ISR);	/* clear flags */
 
 	/* DRM mode config */
-	ret = drm_mode_config_init(&gdev->drm);
+	ret = drmm_mode_config_init(&gdev->drm);
 	if (ret)
 		return ret;
 
