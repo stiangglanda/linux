@@ -94,23 +94,22 @@ static const u32 glanda_plane_formats[] = {
 };
 
 static void glanda_blit_rect(struct glanda_device *gdev,
-			     const struct drm_rect *dst_clip,
+			     const struct drm_rect *clip,
 				 const struct iosys_map *src,
 				 struct drm_framebuffer *fb,
-				 const struct drm_rect *src_clip,
 				 unsigned int src_x, unsigned int src_y)
 {
 	unsigned int src_pitch = fb->pitches[0];
-	unsigned int width = min(drm_rect_width(src_clip), drm_rect_width(dst_clip));
-	unsigned int height = min(drm_rect_height(src_clip), drm_rect_height(dst_clip));
+	unsigned int width = drm_rect_width(clip);
+	unsigned int height = drm_rect_height(clip);
 	unsigned int x, y;
 
 	for (y = 0; y < height; y++) {
 		u32 __iomem *dst = (u32 __iomem *)gdev->vram_base +
-			(size_t)(dst_clip->y1 + y) * GLANDA_WIDTH + dst_clip->x1;
+			(size_t)(clip->y1 + y) * GLANDA_WIDTH + clip->x1;
 
-		size_t src_off = (size_t)(src_y + src_clip->y1 + y) * src_pitch +
-			(size_t)(src_x + src_clip->x1) * sizeof(u32);
+		size_t src_off = (size_t)(src_y + clip->y1 + y) * src_pitch +
+			(size_t)(src_x + clip->x1) * sizeof(u32);
 
 		for (x = 0; x < width; x++) {
 			u32 pixel = iosys_map_rd(src, src_off + x * sizeof(u32), u32);
@@ -156,8 +155,7 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 		if (!drm_rect_intersect(&dst_clip, &damage))
 			continue;
 
-		glanda_blit_rect(gdev, &dst_clip, &shadow_state->data[0], fb,
-				 &damage, src_x, src_y);
+		glanda_blit_rect(gdev, &dst_clip, &shadow_state->data[0], fb, src_x, src_y);
 	}
 
 	drm_dev_exit(idx);
