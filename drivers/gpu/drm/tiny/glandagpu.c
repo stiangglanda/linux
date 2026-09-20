@@ -96,12 +96,19 @@ static void glanda_blit_rect(struct glanda_device *gdev,
 			     const struct drm_rect *dst_clip,
 			     const struct iosys_map *src,
 			     struct drm_framebuffer *fb,
-			     int dst_off_x, int dst_off_y)
+			     int dst_off_x, int dst_off_y,
+				 struct drm_format_conv_state *fmtcnv_state)
 {
 	unsigned int src_pitch = fb->pitches[0];
 	unsigned int width = drm_rect_width(dst_clip);
 	unsigned int height = drm_rect_height(dst_clip);
 	unsigned int x, y;
+	size_t len = width * sizeof(u32);
+	u32 *sbuf;
+
+	sbuf = drm_format_conv_state_reserve(fmtcnv_state, len, GFP_ATOMIC);
+	if (!sbuf)
+		return;
 
 	for (y = 0; y < height; y++) {
 		unsigned int dst_y = dst_clip->y1 + y;
@@ -110,13 +117,12 @@ static void glanda_blit_rect(struct glanda_device *gdev,
 				   (size_t)dst_y * GLANDA_WIDTH + dst_clip->x1;
 		size_t src_off = (size_t)src_y * src_pitch +
 				 (size_t)(dst_clip->x1 - dst_off_x) * sizeof(u32);
+		
+		iosys_map_memcpy_from(sbuf, src, src_off, len);
 
 		for (x = 0; x < width; x++) {
-			u32 pixel = iosys_map_rd(src, src_off + x * sizeof(u32), u32);
-			u32 packed;
-
-			pixel = le32_to_cpu((__force __le32)pixel);
-			packed = ((pixel >> 12) & 0x0F00) |
+			u32 pixel = le32_to_cpu((__force __le32)sbuf[x]);
+			u32 packed = ((pixel >> 12) & 0x0F00) |
 				((pixel >> 8) & 0x00F0) |
 				((pixel >> 4) & 0x000F);
 
@@ -161,7 +167,7 @@ static void glanda_plane_atomic_update(struct drm_plane *plane,
 			continue;
 
 		glanda_blit_rect(gdev, &dst_clip, &shadow_state->data[0], fb,
-				 dst_off_x, dst_off_y);
+				 dst_off_x, dst_off_y, &shadow_state->fmtcnv_state);
 	}
 
 	drm_dev_exit(idx);
