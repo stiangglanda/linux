@@ -106,7 +106,7 @@ static void glanda_blit_rect(struct glanda_device *gdev,
 	size_t len = width * sizeof(u32);
 	u32 *sbuf;
 
-	sbuf = drm_format_conv_state_reserve(fmtcnv_state, len, GFP_ATOMIC);
+	sbuf = drm_format_conv_state_reserve(fmtcnv_state, len, GFP_KERNEL);
 	if (!sbuf)
 		return;
 
