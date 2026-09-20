@@ -470,6 +470,7 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 static void glanda_drm_fini(struct glanda_device *gdev)
 {
 	drm_dev_unplug(&gdev->drm);
+	drm_atomic_helper_shutdown(&gdev->drm);
 }
 
 static int glandagpu_probe(struct platform_device *pdev)
@@ -516,6 +517,13 @@ static void glandagpu_remove(struct platform_device *pdev)
 	glanda_drm_fini(platform_get_drvdata(pdev));
 }
 
+static void glandagpu_shutdown(struct platform_device *pdev)
+{
+	struct glanda_device *gdev = platform_get_drvdata(pdev);
+	
+	drm_atomic_helper_shutdown(&gdev->drm);
+}
+
 /* Device Tree match table. */
 static const struct of_device_id glanda_of_match[] = {
 	{ .compatible = "kieweg,gpu-1.0" },
@@ -531,6 +539,7 @@ static struct platform_driver glandagpu_driver = {
 	},
 	.probe = glandagpu_probe,
 	.remove = glandagpu_remove,
+	.shutdown = glandagpu_shutdown,
 };
 
 /* PCI probe path for the QEMU test device, real hardware uses platform_driver */
@@ -582,6 +591,13 @@ static void glandagpu_pci_remove(struct pci_dev *pdev)
 	glanda_drm_fini(pci_get_drvdata(pdev));
 }
 
+static void glandagpu_pci_shutdown(struct pci_dev *pdev)
+{
+	struct glanda_device *gdev = pci_get_drvdata(pdev);
+	
+	drm_atomic_helper_shutdown(&gdev->drm);
+}
+
 static const struct pci_device_id glanda_pci_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_REDHAT_QUMRANET, PCI_DEVICE_ID_GLANDA_GPU) },
 	{ }
@@ -594,6 +610,7 @@ static struct pci_driver glandagpu_pci_driver = {
 	.id_table = glanda_pci_ids,
 	.probe = glandagpu_pci_probe,
 	.remove = glandagpu_pci_remove,
+	.shutdown = glandagpu_pci_shutdown,
 };
 #endif /* CONFIG_PCI */
 
