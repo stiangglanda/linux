@@ -283,7 +283,6 @@ static void glanda_crtc_disable_vblank(struct drm_crtc *crtc)
 static void glanda_crtc_atomic_flush(struct drm_crtc *crtc,
 				     struct drm_atomic_commit *state)
 {
-	struct glanda_device *gdev = to_glanda(crtc->dev);
 	struct drm_crtc_state *new_state = drm_atomic_get_new_crtc_state(state, crtc);
 	struct drm_pending_vblank_event *event;
 
