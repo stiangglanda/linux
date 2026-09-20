@@ -6,7 +6,6 @@
 #include <linux/platform_device.h>
 #include <linux/pci.h>
 #include <linux/io.h>
-#include <linux/delay.h>	/* udelay (polling) */
 #include <linux/of.h>
 #include <linux/slab.h>		/* GFP_KERNEL */
 #include <linux/interrupt.h>
@@ -256,9 +255,6 @@ static int glanda_crtc_enable_vblank(struct drm_crtc *crtc)
 	u32 ier;
 	int idx;
 
-	if (gdev->irq <= 0)
-		return -EINVAL;
-
 	if (!drm_dev_enter(crtc->dev, &idx))
 		return -ENODEV;
 
@@ -297,7 +293,7 @@ static void glanda_crtc_atomic_flush(struct drm_crtc *crtc,
 
 		spin_lock_irq(&crtc->dev->event_lock);
 
-		if (gdev->irq > 0 && drm_crtc_vblank_get(crtc) == 0)
+		if (drm_crtc_vblank_get(crtc) == 0)
 			drm_crtc_arm_vblank_event(crtc, event);
 		else
 			drm_crtc_send_vblank_event(crtc, event);
@@ -385,8 +381,6 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 {
 	int ret;
 
-	gdev->irq = -1;
-
 	writel(0, gdev->mmio_base + REG_IER);
 	writel(0xFFFFFFFF, gdev->mmio_base + REG_ISR);	/* clear flags */
 
@@ -451,17 +445,13 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 
 	drm_mode_config_reset(&gdev->drm);
 
-	if (irq > 0) {
-		gdev->irq = irq;
-		ret = devm_request_irq(gdev->drm.dev, gdev->irq, glanda_irq_handler,
-				       IRQF_SHARED, "glandagpu", gdev);
-		if (ret) {
-			drm_err(&gdev->drm, "Failed to request IRQ %d\n",
+	gdev->irq = irq;
+	ret = devm_request_irq(gdev->drm.dev, gdev->irq, glanda_irq_handler,
+				    IRQF_SHARED, "glandagpu", gdev);
+	if (ret) {
+		drm_err(&gdev->drm, "Failed to request IRQ %d\n",
 				gdev->irq);
-			return ret;
-		}
-	} else {
-		drm_warn(&gdev->drm, "No IRQ found, falling back to polling\n");
+		return ret;
 	}
 
 	ret = drm_dev_register(&gdev->drm, 0);
@@ -509,10 +499,8 @@ static int glandagpu_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
-	irq = platform_get_irq_optional(pdev, 0);
-	if (irq == -ENXIO)
-		irq = -1;	/* no IRQ resource, fall back to polling */
-	else if (irq < 0)
+	irq = platform_get_irq(pdev, 0);
+	if (irq < 0)
 		return irq;
 
 	return glanda_drm_init(gdev, irq);
