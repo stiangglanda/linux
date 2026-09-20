@@ -368,6 +368,9 @@ static irqreturn_t glanda_irq_handler(int irq, void *dev_id)
 		return IRQ_NONE;
 
 	isr = readl(gdev->mmio_base + REG_ISR);
+	if (unlikely(isr == 0xFFFFFFFF))
+		return IRQ_NONE;
+
 	ier = readl(gdev->mmio_base + REG_IER);
 
 	if (!(isr & ier))
