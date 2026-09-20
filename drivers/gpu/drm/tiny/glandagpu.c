@@ -117,7 +117,7 @@ static void glanda_blit_rect(struct glanda_device *gdev,
 				   (size_t)dst_y * GLANDA_WIDTH + dst_clip->x1;
 		size_t src_off = (size_t)src_y * src_pitch +
 				 (size_t)(dst_clip->x1 - dst_off_x) * sizeof(u32);
-		
+
 		iosys_map_memcpy_from(sbuf, src, src_off, len);
 
 		for (x = 0; x < width; x++) {
@@ -455,10 +455,10 @@ static int glanda_drm_init(struct glanda_device *gdev, int irq)
 
 	gdev->irq = irq;
 	ret = devm_request_irq(gdev->drm.dev, gdev->irq, glanda_irq_handler,
-				    IRQF_SHARED, "glandagpu", gdev);
+			       IRQF_SHARED, "glandagpu", gdev);
 	if (ret) {
 		drm_err(&gdev->drm, "Failed to request IRQ %d\n",
-				gdev->irq);
+			gdev->irq);
 		return ret;
 	}
 
@@ -523,7 +523,7 @@ static void glandagpu_remove(struct platform_device *pdev)
 static void glandagpu_shutdown(struct platform_device *pdev)
 {
 	struct glanda_device *gdev = platform_get_drvdata(pdev);
-	
+
 	drm_atomic_helper_shutdown(&gdev->drm);
 }
 
@@ -597,7 +597,7 @@ static void glandagpu_pci_remove(struct pci_dev *pdev)
 static void glandagpu_pci_shutdown(struct pci_dev *pdev)
 {
 	struct glanda_device *gdev = pci_get_drvdata(pdev);
-	
+
 	drm_atomic_helper_shutdown(&gdev->drm);
 }
 
