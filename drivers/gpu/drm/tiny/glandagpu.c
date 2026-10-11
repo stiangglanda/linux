@@ -286,27 +286,6 @@ static void glanda_crtc_disable_vblank(struct drm_crtc *crtc)
 	drm_dev_exit(idx);
 }
 
-static void glanda_crtc_atomic_flush(struct drm_crtc *crtc,
-				     struct drm_atomic_commit *state)
-{
-	struct drm_crtc_state *new_state = drm_atomic_get_new_crtc_state(state, crtc);
-	struct drm_pending_vblank_event *event;
-
-	if (new_state->event) {
-		event = new_state->event;
-		new_state->event = NULL;
-
-		spin_lock_irq(&crtc->dev->event_lock);
-
-		if (drm_crtc_vblank_get(crtc) == 0)
-			drm_crtc_arm_vblank_event(crtc, event);
-		else
-			drm_crtc_send_vblank_event(crtc, event);
-
-		spin_unlock_irq(&crtc->dev->event_lock);
-	}
-}
-
 static const struct drm_crtc_funcs glanda_crtc_funcs = {
 	.destroy = drm_crtc_cleanup,
 	.set_config = drm_atomic_helper_set_config,
@@ -321,7 +300,7 @@ static const struct drm_crtc_funcs glanda_crtc_funcs = {
 static const struct drm_crtc_helper_funcs glanda_crtc_helper_funcs = {
 	.atomic_enable = drm_crtc_vblank_atomic_enable,
 	.atomic_disable = drm_crtc_vblank_atomic_disable,
-	.atomic_flush = glanda_crtc_atomic_flush,
+	.atomic_flush = drm_crtc_vblank_atomic_flush,
 };
 
 static const struct drm_connector_helper_funcs glanda_connector_helper_funcs = {
